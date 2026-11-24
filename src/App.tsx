@@ -18,6 +18,7 @@ import { LeaderboardModal } from './components/LeaderboardModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import {
+  fetchUserCloudScore,
   type LeaderboardRecord,
   loadSavedPlayerName,
   saveLocalPlayerName,
@@ -199,14 +200,80 @@ export default function App() {
     typeof window !== 'undefined' &&
     window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
-  // Auth & Top-20 Leaderboard subscriptions
+  const cloudSyncTimerRef = useRef<number | null>(null);
+
+  const syncRunToCloud = useCallback(
+    async (finalScore: number, mode: FireMode, zapped: number, combo: number) => {
+      if (!userRef.current || finalScore <= 0) return;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      try {
+        const cleanName = saveLocalPlayerName(playerNameRef.current);
+        const res = await submitLeaderboardScore({
+          playerName: cleanName,
+          score: finalScore,
+          fireMode: mode,
+          zappedCount: zapped,
+          bestCombo: combo,
+        });
+        if (res.saved) {
+          setCloudStatus(`Auto-saved ${res.bestScore} pts to Leaderboard!`);
+        }
+      } catch {
+        // Handled cleanly in structured logger; avoid disrupting gameplay
+      }
+    },
+    []
+  );
+
+  const scheduleAutoCloudSync = useCallback(() => {
+    if (!userRef.current) return;
+    if (cloudSyncTimerRef.current !== null) {
+      window.clearTimeout(cloudSyncTimerRef.current);
+    }
+    cloudSyncTimerRef.current = window.setTimeout(() => {
+      cloudSyncTimerRef.current = null;
+      const sim = simRef.current;
+      if (sim.score > 0) {
+        syncRunToCloud(sim.score, fireModeRef.current, sim.zappedCount, sim.bestCombo);
+      }
+    }, 2500);
+  }, [syncRunToCloud]);
+
+  // Auth & Top-20 Leaderboard subscriptions + automatic score sync on login
   useEffect(() => {
-    const unsubAuth = subscribeAuth((nextUser) => {
+    const unsubAuth = subscribeAuth(async (nextUser) => {
       setUser(nextUser);
       if (nextUser) {
-        setPlayerName((prev) =>
-          prev && prev !== 'Player' ? prev : loadSavedPlayerName(nextUser)
-        );
+        const resolvedName =
+          playerNameRef.current && playerNameRef.current !== 'Player'
+            ? playerNameRef.current
+            : loadSavedPlayerName(nextUser);
+        setPlayerName(resolvedName);
+        playerNameRef.current = resolvedName;
+
+        if (typeof navigator !== 'undefined' && navigator.onLine) {
+          try {
+            const cloudEntry = await fetchUserCloudScore(nextUser.uid);
+            const localBest = simRef.current.bestScore;
+            if (cloudEntry && cloudEntry.score > localBest) {
+              simRef.current.bestScore = cloudEntry.score;
+              setBestScore(cloudEntry.score);
+              localStorage.setItem(BEST_SCORE_KEY, String(cloudEntry.score));
+            } else if (localBest > 0 && (!cloudEntry || localBest > cloudEntry.score)) {
+              const sim = simRef.current;
+              await submitLeaderboardScore({
+                playerName: saveLocalPlayerName(resolvedName),
+                score: localBest,
+                fireMode: fireModeRef.current,
+                zappedCount: Math.max(sim.zappedCount, localBest),
+                bestCombo: sim.bestCombo,
+              });
+              setCloudStatus(`Auto-saved ${localBest} pts to Leaderboard!`);
+            }
+          } catch {
+            // Structured error already logged if needed
+          }
+        }
       }
     });
 
@@ -227,34 +294,25 @@ export default function App() {
       20
     );
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        const sim = simRef.current;
+        if (sim.score > 0 && userRef.current) {
+          syncRunToCloud(sim.score, fireModeRef.current, sim.zappedCount, sim.bestCombo);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       unsubAuth();
       unsubBoard();
-    };
-  }, []);
-
-  const syncRunToCloud = useCallback(
-    async (finalScore: number, mode: FireMode, zapped: number, combo: number) => {
-      if (!userRef.current || finalScore <= 0) return;
-      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-      try {
-        const cleanName = saveLocalPlayerName(playerNameRef.current);
-        const res = await submitLeaderboardScore({
-          playerName: cleanName,
-          score: finalScore,
-          fireMode: mode,
-          zappedCount: zapped,
-          bestCombo: combo,
-        });
-        if (res.saved) {
-          setCloudStatus(`Saved ${res.bestScore} pts to Global Leaderboard!`);
-        }
-      } catch {
-        // Handled cleanly in structured logger; avoid disrupting Game Over
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (cloudSyncTimerRef.current !== null) {
+        window.clearTimeout(cloudSyncTimerRef.current);
       }
-    },
-    []
-  );
+    };
+  }, [syncRunToCloud]);
 
   const spawnMosquito = useCallback(
     (currentScore: number, playTime: number, forceBoss: boolean = false) => {
@@ -342,6 +400,9 @@ export default function App() {
   const resetSimulation = useCallback(
     (mode: GameMode, startPlaying: boolean) => {
       const sim = simRef.current;
+      if (sim.score > 0 && gameStateRef.current !== 'GAME_OVER') {
+        syncRunToCloud(sim.score, fireModeRef.current, sim.zappedCount, sim.bestCombo);
+      }
       const initialLives = mode === 'classic' ? 1 : 3;
       sim.playTime = 0;
       sim.score = 0;
@@ -389,7 +450,7 @@ export default function App() {
         setGameState('TITLE_MENU');
       }
     },
-    [spawnMosquito]
+    [spawnMosquito, syncRunToCloud]
   );
 
   const startGame = useCallback(() => {
@@ -600,6 +661,7 @@ export default function App() {
             if (crossedOldBest) {
               soundEngine.playNewBest();
             }
+            scheduleAutoCloudSync();
           }
 
           const label = isBoss
@@ -694,7 +756,7 @@ export default function App() {
         soundEngine.playThirdLegMiss();
       }
     }
-  }, [prefersReducedMotion]);
+  }, [prefersReducedMotion, scheduleAutoCloudSync]);
 
   // Resize canvas crisply for HiDPI displays
   useEffect(() => {

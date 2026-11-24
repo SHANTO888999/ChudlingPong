@@ -150,7 +150,13 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
                   maxLength={24}
                   value={playerName}
                   onChange={(e) => onPlayerNameChange(e.target.value)}
-                  onBlur={() => onPlayerNameChange(sanitizePlayerName(playerName))}
+                  onBlur={() => {
+                    const cleaned = sanitizePlayerName(playerName);
+                    onPlayerNameChange(cleaned);
+                    if (bestScore > 0) {
+                      handleSubmitBest();
+                    }
+                  }}
                   placeholder="Player nickname"
                   className="flex-1 min-w-0 rounded-lg bg-[#09090D] border border-white/15 px-2.5 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white/40"
                 />

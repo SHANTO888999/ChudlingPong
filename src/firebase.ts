@@ -29,6 +29,7 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 export enum OperationType {
   CREATE = 'create',
@@ -178,6 +179,17 @@ export function subscribeLeaderboard(
       }
     }
   );
+}
+
+export async function fetchUserCloudScore(uid: string): Promise<LeaderboardRecord | null> {
+  const path = `leaderboard/${uid}`;
+  try {
+    const snap = await getDoc(doc(db, 'leaderboard', uid));
+    if (!snap.exists()) return null;
+    return snap.data() as LeaderboardRecord;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+  }
 }
 
 export async function submitLeaderboardScore(params: {
