@@ -292,23 +292,18 @@ export const FaceCropModal: React.FC<FaceCropModalProps> = ({
     onConfirm(exportTransparentFace(out));
   };
 
-  const activeError =
-    errorMessage ||
-    (loadFailed ? 'Could not open this photo format. Try JPG, PNG, or WebP.' : null);
+  const activeError = errorMessage || (loadFailed ? 'Unsupported image' : null);
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
       role="dialog"
       aria-modal="true"
-      aria-label="Fit Face on Character"
+      aria-label="Crop Face"
     >
       <div className="w-full max-w-[360px] rounded-2xl bg-[#121218] border border-white/16 p-4 shadow-2xl text-white flex flex-col gap-3.5">
         <div className="flex items-center justify-between">
-          <div>
-            <h2 className="font-display text-lg font-extrabold leading-tight">Fit Your Face</h2>
-            <p className="text-xs text-zinc-400">Center your face inside the head outline</p>
-          </div>
+          <h2 className="font-display text-lg font-extrabold leading-tight">Crop Face</h2>
           <button
             type="button"
             onClick={onCancel}
@@ -331,7 +326,7 @@ export const FaceCropModal: React.FC<FaceCropModalProps> = ({
             <canvas ref={canvasRef} className="w-full h-full block pointer-events-none" />
             {!imgReady && !activeError && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs font-bold text-zinc-200">
-                Loading photo...
+                Loading...
               </div>
             )}
           </div>
@@ -401,7 +396,7 @@ export const FaceCropModal: React.FC<FaceCropModalProps> = ({
             className="min-h-[44px] py-2.5 px-4 rounded-xl bg-[#EF4444] hover:bg-[#DC2626] disabled:opacity-50 text-white font-extrabold text-sm inline-flex items-center justify-center gap-1.5 shadow-lg transition-colors"
           >
             <Check className="w-4 h-4" />
-            Use Face
+            Save
           </button>
         </div>
       </div>

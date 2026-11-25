@@ -524,7 +524,7 @@ export default function App() {
           x: width * 0.5,
           y: Math.max(106, startY),
           vy: -24,
-          text: 'BOSS INCOMING!',
+          text: 'BOSS!',
           color: '#F43F5E',
           life: 1.15,
           maxLife: 1.15,
@@ -733,7 +733,7 @@ export default function App() {
           x: pu.x,
           y: pu.y - 16,
           vy: -48,
-          text: '3X SHOT!',
+          text: '3X',
           color: '#38BDF8',
           life: 1.0,
           maxLife: 1.0,
@@ -793,7 +793,7 @@ export default function App() {
             x: target.x,
             y: target.y - 22,
             vy: -44,
-            text: `HIT! (${target.hp})`,
+            text: `${target.hp}`,
             color: '#F472B6',
             life: 0.65,
             maxLife: 0.65,
@@ -826,13 +826,7 @@ export default function App() {
             }
           }
 
-          const label = isBoss
-            ? 'BOSS! +5'
-            : isGolden
-              ? '+2'
-              : target.state === 'diving'
-                ? 'SAVE! +1'
-                : '+1';
+          const label = isBoss ? '+5' : isGolden ? '+2' : '+1';
 
           sim.floatingTexts.push({
             x: target.x,
@@ -1199,7 +1193,7 @@ export default function App() {
                 x: sleeper.x,
                 y: sleeper.y - 36,
                 vy: -40,
-                text: 'OUCH!',
+                text: '-1',
                 color: '#DC2626',
                 life: 0.85,
                 maxLife: 0.85,
@@ -1485,9 +1479,7 @@ export default function App() {
       setCropSourceUrl(normalizedDataUrl);
     } catch {
       if (uploadSeqRef.current !== seq) return;
-      setCropError(
-        'Could not open this image. If it is an iPhone HEIC file, try saving/selecting as JPG or PNG.'
-      );
+      setCropError('Unsupported image');
     }
   };
 
@@ -1590,7 +1582,7 @@ export default function App() {
               {gameState === 'PLAYING' && tripleShotSeconds > 0 && (
                 <div className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-sky-500/25 border border-sky-400/50 px-2 py-0.5 text-[11px] font-extrabold text-sky-200 tabular-nums">
                   <Zap className="w-3 h-3 fill-sky-300 text-sky-300" />
-                  3X SHOT {tripleShotSeconds}s
+                  3X {tripleShotSeconds}s
                 </div>
               )}
             </div>
@@ -1749,7 +1741,7 @@ export default function App() {
                 className="w-full min-h-[46px] py-3 px-5 rounded-xl bg-[#EF4444] hover:bg-[#DC2626] active:scale-[0.98] text-white font-extrabold text-sm sm:text-base shadow-[0_6px_20px_rgba(239,68,68,0.38)] inline-flex items-center justify-center gap-2 transition-all whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
               >
                 <Play className="w-4 h-4 fill-current shrink-0" />
-                Start Game
+                Play
               </button>
 
               {/* Secondary Utility Row */}
@@ -1777,7 +1769,7 @@ export default function App() {
                   className="min-h-[42px] py-2 px-3 rounded-xl bg-white/8 hover:bg-white/14 border border-white/14 text-zinc-100 font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
                 >
                   <Share2 className="w-4 h-4 text-zinc-200 shrink-0" />
-                  {shareLabel === 'Share' ? 'Share Game' : shareLabel}
+                  {shareLabel}
                 </button>
               </div>
 
@@ -1792,7 +1784,7 @@ export default function App() {
             <div className="w-full max-w-[310px] bg-white rounded-2xl p-6 border-2 border-black/15 shadow-2xl flex flex-col gap-3 text-center">
               <h2 className="font-display text-2xl font-extrabold text-[#1E1C21]">Paused</h2>
               <p className="text-sm font-semibold text-[#4B4751] tabular-nums">
-                Score {score} · Best {bestScore}
+                {score} · Best {bestScore}
               </p>
               <button
                 type="button"
@@ -1813,7 +1805,7 @@ export default function App() {
                 onClick={() => resetSimulation(gameMode, false)}
                 className="w-full py-2.5 px-5 rounded-xl bg-white hover:bg-zinc-100 border-2 border-zinc-300 text-[#1E1C21] font-bold text-sm transition-colors whitespace-nowrap shrink-0"
               >
-                Main Menu
+                Menu
               </button>
             </div>
           </div>
@@ -1823,26 +1815,20 @@ export default function App() {
         {gameState === 'GAME_OVER' && (
           <div className="absolute inset-0 bg-black/55 backdrop-blur-[2px] flex items-center justify-center px-6 z-30">
             <div className="w-full max-w-[324px] bg-white rounded-2xl p-6 border-2 border-black/15 shadow-2xl flex flex-col items-center text-center">
-              <span className="text-xs font-extrabold uppercase tracking-wider text-[#DC2626]">
-                Mosquito Bit You
-              </span>
-              <h2 className="mt-1 font-display text-3xl font-extrabold text-[#1E1C21]">
-                Woke Up!
+              <h2 className="font-display text-3xl font-extrabold text-[#1E1C21]">
+                Game Over
               </h2>
 
-              <div className="mt-4 flex items-baseline gap-2">
+              <div className="mt-3 flex items-baseline">
                 <span className="font-display text-5xl font-extrabold text-[#1E1C21] tabular-nums">
                   {score}
                 </span>
-                <span className="text-sm font-bold text-[#4B4751]">pts</span>
               </div>
 
               <div className="mt-2 flex items-center gap-2 text-xs font-bold text-[#4B4751] tabular-nums">
-                <span>{isNewBest ? 'New Best Score' : `Best ${bestScore}`}</span>
+                <span>{isNewBest ? 'New Best' : `Best ${bestScore}`}</span>
                 <span aria-hidden="true">·</span>
-                <span>{zappedCount} Zapped</span>
-                <span aria-hidden="true">·</span>
-                <span>{bestCombo}x Streak</span>
+                <span>{bestCombo}x</span>
               </div>
 
               <button
@@ -1886,7 +1872,7 @@ export default function App() {
                 onClick={() => resetSimulation(gameMode, false)}
                 className="mt-2.5 w-full py-2.5 px-4 rounded-xl bg-white hover:bg-zinc-100 border-2 border-zinc-300 text-[#1E1C21] font-bold text-sm transition-colors whitespace-nowrap shrink-0"
               >
-                Main Menu
+                Menu
               </button>
             </div>
           </div>

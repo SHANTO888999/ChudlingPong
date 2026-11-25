@@ -17,7 +17,7 @@ export default defineConfig(() => {
           id: '/',
           name: 'Chudling Pong',
           short_name: 'ChudlingPong',
-          description: 'Aim and zap buzzing mosquitoes in the night before they bite the sleeper in bed.',
+          description: 'Chudling Pong',
           theme_color: '#050507',
           background_color: '#050507',
           display: 'standalone',

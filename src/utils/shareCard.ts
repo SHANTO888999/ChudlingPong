@@ -27,26 +27,12 @@ export function getSharePlayUrl(): string {
 
 export function buildShareInviteText(input: SharePayloadInput): string {
   const modeLabel = input.fireMode === 'hand' ? 'Normal' : 'Chudling';
-  const modeEmoji = input.fireMode === 'hand' ? '🔥' : '💦';
 
   if (input.isGameInviteOnly) {
-    const bestLine =
-      input.bestScore > 0
-        ? `🏆 My Best: ${input.bestScore} pts — Think you can beat me?\n`
-        : '';
-    return [
-      '🦟 Chudling Pong — Night Mosquito Arcade!',
-      'Zap mosquitoes in Normal 🔥 or Chudling 💦 mode before they wake you up.',
-      `${bestLine}👉 Tap the link below & play free:`,
-    ].join('\n');
+    return input.bestScore > 0 ? `Chudling Pong — Best ${input.bestScore}` : 'Chudling Pong';
   }
 
-  return [
-    `🔥 ${input.playerName} scored ${input.score} pts in Chudling Pong!`,
-    `🎮 Mode: ${modeEmoji} ${modeLabel}  |  🦟 Zapped: ${input.zappedCount}  |  ⚡ Streak: ${input.bestCombo}x`,
-    `🏆 Best: ${Math.max(input.score, input.bestScore)} pts`,
-    '👉 Beat my score & play free:',
-  ].join('\n');
+  return `Chudling Pong — ${input.score} (${modeLabel})`;
 }
 
 export async function shareChudlingPong(
@@ -58,7 +44,7 @@ export async function shareChudlingPong(
   if (typeof navigator !== 'undefined' && navigator.share) {
     try {
       await navigator.share({
-        title: 'Chudling Pong — Zap Mosquitoes Before They Bite!',
+        title: 'Chudling Pong',
         text: inviteText,
         url: playUrl,
       });

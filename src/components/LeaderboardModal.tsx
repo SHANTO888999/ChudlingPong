@@ -108,7 +108,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
           <div className="flex items-center gap-2">
             <Trophy className="w-5 h-5 text-amber-400" />
             <h2 className="font-display text-lg font-extrabold tracking-tight">
-              Chudling Pong Top 20
+              Top 20
             </h2>
           </div>
           <button
@@ -121,13 +121,10 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
           </button>
         </div>
 
-        {/* Nickname & Optional Google Sign-In Bar */}
+        {/* Name & Sign-In Bar */}
         <div className="px-4 py-3 bg-white/6 border-b border-white/12 flex flex-col gap-2">
-          <div className="flex items-center justify-between text-[11px] text-zinc-300 font-semibold">
-            <span>Nickname</span>
-            <span className="text-emerald-400 font-bold tabular-nums">
-              Best: {bestScore} pts
-            </span>
+          <div className="flex items-center justify-end text-[11px] font-bold">
+            <span className="text-emerald-400 tabular-nums">Best {bestScore}</span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -142,7 +139,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
                   e.currentTarget.blur();
                 }
               }}
-              placeholder="Your nickname"
+              placeholder="Name"
               className="flex-1 min-w-0 rounded-xl bg-[#09090D] border-2 border-white/20 px-3 py-2 text-xs font-semibold text-white placeholder-zinc-500 focus:outline-none focus:border-white/50"
             />
             {!user ? (
@@ -153,7 +150,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
                 className="shrink-0 px-3 py-2 rounded-xl bg-white hover:bg-zinc-200 text-[#050507] border-2 border-white font-extrabold text-xs inline-flex items-center gap-1.5 transition-colors disabled:opacity-50 shadow-sm"
               >
                 <LogIn className="w-3.5 h-3.5" />
-                Google Login
+                Sign In
               </button>
             ) : (
               <button
@@ -172,13 +169,11 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
         {/* Entries List */}
         <div className="flex-1 overflow-y-auto px-3 py-2.5 space-y-1.5">
           {loading ? (
-            <p className="py-8 text-center text-xs text-zinc-400">Loading leaderboard...</p>
+            <p className="py-8 text-center text-xs text-zinc-400">Loading...</p>
           ) : errorText ? (
             <p className="py-8 text-center text-xs text-red-400 px-3">{errorText}</p>
           ) : entries.length === 0 ? (
-            <p className="py-8 text-center text-xs text-zinc-400">
-              No scores yet. Play a round to claim #1!
-            </p>
+            <p className="py-8 text-center text-xs text-zinc-400">No scores yet</p>
           ) : (
             entries.map((entry, index) => {
               const isSelf = activeUid === entry.uid;
@@ -205,7 +200,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
                         {isSelf ? ' (You)' : ''}
                       </p>
                       <p className="text-[10px] text-zinc-400">
-                        {entry.fireMode === 'hand' ? 'Normal' : 'Chudling'} · {entry.zappedCount} zapped
+                        {entry.fireMode === 'hand' ? 'Normal' : 'Chudling'}
                       </p>
                     </div>
                   </div>
