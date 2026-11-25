@@ -49,6 +49,7 @@ export interface BeamEffect {
   hit: boolean;
   life: number;
   maxLife: number;
+  kind?: 'white' | 'fire';
 }
 
 export interface Particle {
@@ -74,6 +75,7 @@ export interface PoopSplat {
   rotation: number;
   life: number;
   maxLife: number;
+  kind?: 'white' | 'fire';
 }
 
 export interface FloatingText {

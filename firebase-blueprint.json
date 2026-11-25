@@ -2,12 +2,12 @@
   "entities": {
     "LeaderboardEntry": {
       "title": "LeaderboardEntry",
-      "description": "PII-free public arcade high-score entry for Chudling Pong.",
+      "description": "PII-free public arcade high-score entry for Chudling Pong (supports both verified Google accounts and unique guest IDs).",
       "type": "object",
       "properties": {
         "uid": {
           "type": "string",
-          "description": "Authenticated user UID owning this leaderboard entry.",
+          "description": "Owner UID (Firebase Auth UID for signed-in users, or guest_<alnum> for guest players).",
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
@@ -36,6 +36,10 @@
           "type": "integer",
           "description": "Highest hit streak achieved during the best run."
         },
+        "isGuest": {
+          "type": "boolean",
+          "description": "True for guest entries using a unique local guest ID, false for Google-authenticated entries."
+        },
         "updatedAt": {
           "type": "string",
           "format": "date-time",
@@ -49,6 +53,7 @@
         "fireMode",
         "zappedCount",
         "bestCombo",
+        "isGuest",
         "updatedAt"
       ]
     }
@@ -56,7 +61,7 @@
   "firestore": {
     "/leaderboard/{entryId}": {
       "schema": { "$ref": "#/entities/LeaderboardEntry" },
-      "description": "Public top-score leaderboard keyed by authenticated user UID (entryId == uid)."
+      "description": "Public top-score leaderboard keyed by owner UID or unique guest ID (entryId == uid)."
     }
   }
 }

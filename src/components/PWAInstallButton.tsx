@@ -15,7 +15,7 @@ export const PWAInstallButton: React.FC = () => {
       <button
         type="button"
         onClick={install}
-        className="w-full py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/18 border border-white/15 text-white font-semibold text-xs inline-flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+        className="w-full py-2.5 px-4 rounded-xl bg-[#1E1C21] hover:bg-[#2E2B33] border-2 border-black/15 text-white font-bold text-xs inline-flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98]"
       >
         <Download className="w-4 h-4" />
         Install App
@@ -29,15 +29,15 @@ export const PWAInstallButton: React.FC = () => {
         <button
           type="button"
           onClick={() => setShowIOSGuide(true)}
-          className="w-full py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/18 border border-white/15 text-white font-semibold text-xs inline-flex items-center justify-center gap-2 transition-all"
+          className="w-full py-2.5 px-4 rounded-xl bg-[#1E1C21] hover:bg-[#2E2B33] border-2 border-black/15 text-white font-bold text-xs inline-flex items-center justify-center gap-2 shadow-sm transition-all"
         >
           <Download className="w-4 h-4" />
           Install on iOS
         </button>
 
         {showIOSGuide && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-            <div className="w-full max-w-sm rounded-2xl bg-[#14141B] border border-white/15 p-6 shadow-2xl text-white">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
+            <div className="w-full max-w-sm rounded-2xl bg-[#14141B] border-2 border-white/20 p-6 shadow-2xl text-white">
               <h3 className="font-display text-lg font-bold">Install Chudling Pong</h3>
               <p className="mt-2 text-sm text-zinc-300 leading-relaxed">
                 1. Tap the <strong>Share</strong> button in Safari.<br />
@@ -46,7 +46,7 @@ export const PWAInstallButton: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowIOSGuide(false)}
-                className="mt-4 w-full rounded-xl bg-white text-[#050507] py-2.5 text-sm font-bold hover:bg-zinc-200 transition-colors"
+                className="mt-4 w-full rounded-xl bg-white text-[#050507] py-2.5 text-sm font-extrabold hover:bg-zinc-200 transition-colors"
               >
                 Got it
               </button>

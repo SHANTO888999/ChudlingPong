@@ -28,6 +28,14 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isValidGuestId(id) {
+      return id is string && id.size() >= 22 && id.size() <= 40 && id.matches('^guest_[a-zA-Z0-9]{16,32}$');
+    }
+
+    function isValidGoogleId(id) {
+      return isValidId(id) && !id.matches('^guest_.*');
+    }
+
     function isValidLeaderboardEntry(data) {
       return data.keys().hasAll([
           'uid',
@@ -36,6 +44,7 @@ service cloud.firestore {
           'fireMode',
           'zappedCount',
           'bestCombo',
+          'isGuest',
           'updatedAt'
         ])
         && data.keys().hasOnly([
@@ -45,10 +54,10 @@ service cloud.firestore {
           'fireMode',
           'zappedCount',
           'bestCombo',
+          'isGuest',
           'updatedAt'
         ])
         && isValidId(data.uid)
-        && data.uid == request.auth.uid
         && data.playerName is string
         && data.playerName.size() >= 1
         && data.playerName.size() <= 24
@@ -64,45 +73,69 @@ service cloud.firestore {
         && data.bestCombo is int
         && data.bestCombo >= 0
         && data.bestCombo <= 10000
+        && data.isGuest is bool
         && data.updatedAt is timestamp;
     }
 
-    // Public PII-free arcade leaderboard
+    // Public PII-free arcade leaderboard (optional Google login + unique guest IDs)
     match /leaderboard/{entryId} {
       allow get: if isValidId(entryId);
       allow list: if resource.data.score >= 0
         && request.query.limit != null
         && request.query.limit <= 50;
 
-      allow create: if isEmailVerified()
-        && isValidId(entryId)
-        && request.auth.uid == entryId
+      allow create: if isValidId(entryId)
         && isValidLeaderboardEntry(incoming())
-        && incoming().updatedAt == request.time;
+        && incoming().uid == entryId
+        && incoming().updatedAt == request.time
+        && (
+          (
+            isEmailVerified()
+            && isValidGoogleId(entryId)
+            && request.auth.uid == entryId
+            && incoming().isGuest == false
+          )
+          ||
+          (
+            isValidGuestId(entryId)
+            && incoming().isGuest == true
+          )
+        );
 
-      allow update: if isEmailVerified()
-        && isValidId(entryId)
-        && request.auth.uid == entryId
+      allow update: if isValidId(entryId)
         && isValidLeaderboardEntry(incoming())
         && incoming().uid == existing().uid
         && incoming().updatedAt == request.time
         && (
-          // Action: Update High Score & Stats
           (
-            incoming().score >= existing().score
-            && incoming().diff(existing()).affectedKeys().hasOnly([
-              'playerName',
-              'score',
-              'fireMode',
-              'zappedCount',
-              'bestCombo',
-              'updatedAt'
-            ])
+            isEmailVerified()
+            && isValidGoogleId(entryId)
+            && request.auth.uid == entryId
+            && incoming().isGuest == false
+            && (!('isGuest' in existing()) || existing().isGuest == false)
           )
+          ||
+          (
+            isValidGuestId(entryId)
+            && incoming().isGuest == true
+            && existing().isGuest == true
+          )
+        )
+        && (
+          incoming().score >= existing().score
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'playerName',
+            'score',
+            'fireMode',
+            'zappedCount',
+            'bestCombo',
+            'isGuest',
+            'updatedAt'
+          ])
         );
 
       allow delete: if isEmailVerified()
-        && isValidId(entryId)
+        && isValidGoogleId(entryId)
         && request.auth.uid == entryId;
     }
   }

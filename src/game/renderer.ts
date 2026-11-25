@@ -388,9 +388,67 @@ function drawStickyWhiteSplat(
   ctx.restore();
 }
 
+function drawFireBurst(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  rotation: number,
+  alphaScale: number = 1
+): void {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rotation);
+
+  const glow = ctx.createRadialGradient(0, 0, radius * 0.1, 0, 0, radius * 1.45);
+  glow.addColorStop(0, `rgba(254, 240, 138, ${0.85 * alphaScale})`);
+  glow.addColorStop(0.45, `rgba(249, 115, 22, ${0.72 * alphaScale})`);
+  glow.addColorStop(1, 'rgba(239, 68, 68, 0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(0, 0, radius * 1.45, 0, Math.PI * 2);
+  ctx.fill();
+
+  const spikes = 8;
+  ctx.fillStyle = '#F97316';
+  ctx.beginPath();
+  for (let i = 0; i < spikes * 2; i++) {
+    const ang = (i / (spikes * 2)) * Math.PI * 2;
+    const r = i % 2 === 0 ? radius * (0.95 + (i % 3) * 0.12) : radius * 0.48;
+    const px = Math.cos(ang) * r;
+    const py = Math.sin(ang) * r;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#FEF08A';
+  ctx.beginPath();
+  ctx.arc(0, 0, radius * 0.42, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
 function drawPoopSplat(ctx: CanvasRenderingContext2D, splat: PoopSplat): void {
   const progress = splat.life / splat.maxLife;
   const alpha = Math.min(1, progress * 1.55);
+  if (splat.kind === 'fire') {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, alpha * 0.85);
+    drawFireBurst(
+      ctx,
+      splat.x,
+      splat.y - (1 - progress) * 10,
+      15 * splat.scale * (0.75 + progress * 0.35),
+      splat.rotation + (1 - progress) * 1.5,
+      alpha
+    );
+    ctx.restore();
+    return;
+  }
+
   const stretchDrip = (1 - progress) * 24;
   ctx.save();
   ctx.globalAlpha = Math.max(0, alpha * 0.94);
@@ -412,6 +470,57 @@ function drawBeam(ctx: CanvasRenderingContext2D, beam: BeamEffect): void {
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.lineCap = 'round';
+
+  if (beam.kind === 'fire') {
+    // Outer blazing red-orange flame sheath
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
+    ctx.lineWidth = 17 * progress + 6;
+    ctx.beginPath();
+    ctx.moveTo(beam.x1, beam.y1);
+    ctx.lineTo(beam.x2, beam.y2);
+    ctx.stroke();
+
+    // Mid bright orange fire jet
+    ctx.strokeStyle = '#F97316';
+    ctx.lineWidth = 10.5 * progress + 3.5;
+    ctx.beginPath();
+    ctx.moveTo(beam.x1, beam.y1);
+    ctx.lineTo(beam.x2, beam.y2);
+    ctx.stroke();
+
+    // Hot golden-yellow inner flame core
+    ctx.strokeStyle = '#FEF08A';
+    ctx.lineWidth = 4.4 * progress + 1.4;
+    ctx.beginPath();
+    ctx.moveTo(beam.x1, beam.y1);
+    ctx.lineTo(beam.x2, beam.y2);
+    ctx.stroke();
+
+    // Flying ember sparks along the flame stream
+    const dx = beam.x2 - beam.x1;
+    const dy = beam.y2 - beam.y1;
+    const dist = Math.hypot(dx, dy) || 1;
+    const steps = Math.max(2, Math.min(9, Math.floor(dist / 42)));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const jitter = Math.sin(beam.id * 3 + i * 2.1 + progress * 8) * 4;
+      const gx = beam.x1 + dx * t + jitter;
+      const gy = beam.y1 + dy * t;
+      const r = (3.6 + (i % 2) * 1.8) * progress + 1.2;
+      ctx.fillStyle = i % 2 === 0 ? '#FACC15' : '#FB923C';
+      ctx.beginPath();
+      ctx.arc(gx, gy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    drawFireBurst(ctx, beam.x1, beam.y1, 10 * (1.1 - progress * 0.2), 0.4);
+    if (beam.hit) {
+      drawFireBurst(ctx, beam.x2, beam.y2, 22 + (1 - progress) * 10, beam.id * 0.7);
+    }
+
+    ctx.restore();
+    return;
+  }
 
   // Soft milky-white outer viscous sheen
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.34)';
@@ -766,13 +875,17 @@ function drawBedAndSleeper(rc: RenderContext): void {
     ctx.fill();
     ctx.stroke();
     const flicker = Math.sin(time * 24) * 1.0;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.fillStyle = 'rgba(249, 115, 22, 0.38)';
     ctx.beginPath();
-    ctx.arc(0, -21, 7.5 + flicker * 0.4, 0, Math.PI * 2);
+    ctx.arc(0, -21, 8.2 + flicker * 0.5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = '#FFFFFF';
+    ctx.fillStyle = '#F97316';
     ctx.beginPath();
-    ctx.ellipse(0, -21 - flicker * 0.25, 3.8, 5.4 + flicker * 0.4, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, -21 - flicker * 0.3, 4.4, 6.2 + flicker * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FEF08A';
+    ctx.beginPath();
+    ctx.ellipse(0, -20.5 - flicker * 0.2, 2.2, 3.6 + flicker * 0.3, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   } else {

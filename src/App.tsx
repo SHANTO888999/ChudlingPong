@@ -19,7 +19,10 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import {
   fetchUserCloudScore,
+  flushPendingOfflineSync,
+  getActivePlayerUid,
   type LeaderboardRecord,
+  loadCachedLeaderboard,
   loadSavedPlayerName,
   saveLocalPlayerName,
   submitLeaderboardScore,
@@ -99,8 +102,9 @@ function rayCircleIntersect(
   return null;
 }
 
-function getDifficultyLevel(playTime: number, score: number): number {
-  return Math.max(playTime / 12, (playTime * 0.55 + score * 0.8) / 10);
+function getDifficultyLevel(playTime: number, score: number, mode: FireMode = 'thirdLeg'): number {
+  const base = (playTime * 0.28 + score * 0.45) / 12;
+  return mode === 'hand' ? base * 0.62 : base;
 }
 
 export default function App() {
@@ -127,8 +131,12 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [playerName, setPlayerName] = useState<string>(() => loadSavedPlayerName(null));
   const [leaderboardOpen, setLeaderboardOpen] = useState<boolean>(false);
-  const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardRecord[]>([]);
-  const [leaderboardLoading, setLeaderboardLoading] = useState<boolean>(true);
+  const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardRecord[]>(() =>
+    loadCachedLeaderboard()
+  );
+  const [leaderboardLoading, setLeaderboardLoading] = useState<boolean>(
+    () => loadCachedLeaderboard().length === 0
+  );
   const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
   const [cloudStatus, setCloudStatus] = useState<string | null>(null);
   const [shareLabel, setShareLabel] = useState<string>('Share');
@@ -187,9 +195,6 @@ export default function App() {
   const fireModeRef = useRef<FireMode>(fireMode);
   fireModeRef.current = fireMode;
 
-  const userRef = useRef<User | null>(user);
-  userRef.current = user;
-
   const playerNameRef = useRef<string>(playerName);
   playerNameRef.current = playerName;
 
@@ -204,8 +209,7 @@ export default function App() {
 
   const syncRunToCloud = useCallback(
     async (finalScore: number, mode: FireMode, zapped: number, combo: number) => {
-      if (!userRef.current || finalScore <= 0) return;
-      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      if (finalScore <= 0) return;
       try {
         const cleanName = saveLocalPlayerName(playerNameRef.current);
         const res = await submitLeaderboardScore({
@@ -215,18 +219,24 @@ export default function App() {
           zappedCount: zapped,
           bestCombo: combo,
         });
-        if (res.saved) {
+        if (res.offlineQueued) {
+          setLeaderboardEntries(loadCachedLeaderboard());
+          setLeaderboardLoading(false);
+          setLeaderboardError(null);
+          setCloudStatus(`Saved ${res.bestScore} pts offline (auto-syncs online).`);
+        } else if (res.saved) {
+          setLeaderboardEntries(loadCachedLeaderboard());
           setCloudStatus(`Auto-saved ${res.bestScore} pts to Leaderboard!`);
         }
       } catch {
-        // Handled cleanly in structured logger; avoid disrupting gameplay
+        // Handled cleanly in structured logger; keep cached leaderboard visible
+        setLeaderboardEntries(loadCachedLeaderboard());
       }
     },
     []
   );
 
   const scheduleAutoCloudSync = useCallback(() => {
-    if (!userRef.current) return;
     if (cloudSyncTimerRef.current !== null) {
       window.clearTimeout(cloudSyncTimerRef.current);
     }
@@ -239,41 +249,50 @@ export default function App() {
     }, 2500);
   }, [syncRunToCloud]);
 
-  // Auth & Top-20 Leaderboard subscriptions + automatic score sync on login
+  // Auth & Top-20 Leaderboard subscriptions + offline queue flush & automatic score sync
   useEffect(() => {
     const unsubAuth = subscribeAuth(async (nextUser) => {
       setUser(nextUser);
-      if (nextUser) {
-        const resolvedName =
-          playerNameRef.current && playerNameRef.current !== 'Player'
-            ? playerNameRef.current
-            : loadSavedPlayerName(nextUser);
-        setPlayerName(resolvedName);
-        playerNameRef.current = resolvedName;
+      const resolvedName = loadSavedPlayerName(nextUser);
+      setPlayerName(resolvedName);
+      playerNameRef.current = resolvedName;
 
-        if (typeof navigator !== 'undefined' && navigator.onLine) {
-          try {
-            const cloudEntry = await fetchUserCloudScore(nextUser.uid);
-            const localBest = simRef.current.bestScore;
-            if (cloudEntry && cloudEntry.score > localBest) {
-              simRef.current.bestScore = cloudEntry.score;
-              setBestScore(cloudEntry.score);
-              localStorage.setItem(BEST_SCORE_KEY, String(cloudEntry.score));
-            } else if (localBest > 0 && (!cloudEntry || localBest > cloudEntry.score)) {
-              const sim = simRef.current;
-              await submitLeaderboardScore({
-                playerName: saveLocalPlayerName(resolvedName),
-                score: localBest,
-                fireMode: fireModeRef.current,
-                zappedCount: Math.max(sim.zappedCount, localBest),
-                bestCombo: sim.bestCombo,
-              });
-              setCloudStatus(`Auto-saved ${localBest} pts to Leaderboard!`);
-            }
-          } catch {
-            // Structured error already logged if needed
+      const activeUid = nextUser ? nextUser.uid : getActivePlayerUid();
+
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        try {
+          await flushPendingOfflineSync();
+          const cloudEntry = await fetchUserCloudScore(activeUid);
+          const localBest = simRef.current.bestScore;
+          if (cloudEntry && cloudEntry.score > localBest) {
+            simRef.current.bestScore = cloudEntry.score;
+            setBestScore(cloudEntry.score);
+            localStorage.setItem(BEST_SCORE_KEY, String(cloudEntry.score));
+          } else if (localBest > 0 && (!cloudEntry || localBest > cloudEntry.score)) {
+            const sim = simRef.current;
+            await submitLeaderboardScore({
+              playerName: saveLocalPlayerName(resolvedName),
+              score: localBest,
+              fireMode: fireModeRef.current,
+              zappedCount: Math.max(sim.zappedCount, localBest),
+              bestCombo: sim.bestCombo,
+            });
+            setCloudStatus(`Auto-saved ${localBest} pts to Leaderboard!`);
           }
+        } catch {
+          // Structured error already logged if needed
         }
+      } else if (simRef.current.bestScore > 0) {
+        const sim = simRef.current;
+        await submitLeaderboardScore({
+          playerName: saveLocalPlayerName(resolvedName),
+          score: sim.bestScore,
+          fireMode: fireModeRef.current,
+          zappedCount: Math.max(sim.zappedCount, sim.bestScore),
+          bestCombo: sim.bestCombo,
+        });
+        setLeaderboardEntries(loadCachedLeaderboard());
+        setLeaderboardLoading(false);
       }
     });
 
@@ -284,12 +303,18 @@ export default function App() {
         setLeaderboardError(null);
       },
       (err) => {
+        const cached = loadCachedLeaderboard();
         setLeaderboardLoading(false);
-        setLeaderboardError(
-          err instanceof Error && err.message.includes('Quota exceeded')
-            ? 'Daily Firestore quota exceeded. Try again tomorrow.'
-            : 'Could not load global leaderboard right now.'
-        );
+        if (cached.length > 0) {
+          setLeaderboardEntries(cached);
+          setLeaderboardError(null);
+        } else {
+          setLeaderboardError(
+            err instanceof Error && err.message.includes('Quota exceeded')
+              ? 'Daily Firestore quota exceeded. Try again tomorrow.'
+              : 'Offline mode: play a round to see your score here.'
+          );
+        }
       },
       20
     );
@@ -297,17 +322,27 @@ export default function App() {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
         const sim = simRef.current;
-        if (sim.score > 0 && userRef.current) {
+        if (sim.score > 0) {
           syncRunToCloud(sim.score, fireModeRef.current, sim.zappedCount, sim.bestCombo);
         }
       }
     };
+
+    const handleReconnect = async () => {
+      const res = await flushPendingOfflineSync();
+      if (res.synced && res.bestScore) {
+        setCloudStatus(`Synced offline ${res.bestScore} pts to Leaderboard!`);
+      }
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleReconnect);
 
     return () => {
       unsubAuth();
       unsubBoard();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleReconnect);
       if (cloudSyncTimerRef.current !== null) {
         window.clearTimeout(cloudSyncTimerRef.current);
       }
@@ -318,21 +353,23 @@ export default function App() {
     (currentScore: number, playTime: number, forceBoss: boolean = false) => {
       const sim = simRef.current;
       const { width, height } = sim;
-      const d = getDifficultyLevel(playTime, currentScore);
+      const isNormalMode = fireModeRef.current === 'hand';
+      const d = getDifficultyLevel(playTime, currentScore, fireModeRef.current);
       const fromLeft = Math.random() < 0.5;
       const startX = fromLeft ? -22 : width + 22;
       const startY = height * (0.14 + Math.random() * 0.28);
 
-      const speedBoost = 1 + Math.min(d * 0.24, 2.0);
+      const speedBoost = 1 + Math.min(d * 0.14, isNormalMode ? 0.75 : 1.15);
       const kind: Mosquito['kind'] = forceBoss
         ? 'boss'
         : currentScore >= 3 && Math.random() < 0.18
           ? 'golden'
           : 'normal';
+      const modeSpeedScale = isNormalMode ? 0.8 : 1;
       const baseSpeed =
         kind === 'boss'
-          ? 105 * (1 + Math.min(d * 0.14, 1.1))
-          : (kind === 'golden' ? 168 : 122) * speedBoost;
+          ? 96 * modeSpeedScale * (1 + Math.min(d * 0.10, 0.8))
+          : (kind === 'golden' ? 148 : 114) * modeSpeedScale * speedBoost;
 
       const targetX = width * (0.25 + Math.random() * 0.5);
       const angleToCenter = Math.atan2(height * 0.26 - startY, targetX - startX);
@@ -347,16 +384,17 @@ export default function App() {
         radius: kind === 'boss' ? 25 : kind === 'golden' ? 15 : 17,
         wingPhase: Math.random() * Math.PI * 2,
         wobblePhase: Math.random() * Math.PI * 2,
-        wobbleSpeed: 4.8 + Math.min(d * 0.6, 4.0) + Math.random() * 3,
+        wobbleSpeed: (isNormalMode ? 3.2 : 4.2) + Math.min(d * 0.42, 3.0) + Math.random() * 2.2,
         kind,
         hp: maxHp,
         maxHp,
         hitFlash: 0,
         state: 'roaming',
         stateTimer:
-          kind === 'boss'
-            ? Math.max(2.2, 4.6 - d * 0.25)
-            : Math.max(0.85, 3.6 - d * 0.45) + Math.random() * Math.max(0.6, 1.8 - d * 0.2),
+          (kind === 'boss'
+            ? Math.max(2.6, 4.8 - d * 0.2)
+            : Math.max(1.35, 3.8 - d * 0.28) + Math.random() * Math.max(0.7, 1.8 - d * 0.14)) *
+          (isNormalMode ? 1.25 : 1),
         diveTargetX: 0,
         diveTargetY: 0,
         facing: fromLeft ? -1 : 1,
@@ -471,8 +509,12 @@ export default function App() {
     const tripleActive = sim.tripleShotTimer > 0;
     const angles = tripleActive ? [sim.aimAngle - 0.22, sim.aimAngle, sim.aimAngle + 0.22] : [sim.aimAngle];
 
-    const d = getDifficultyLevel(sim.playTime, sim.score);
-    const hitForgiveness = Math.max(5, 11 - d * 0.8);
+    const isNormalMode = fireModeRef.current === 'hand';
+    const d = getDifficultyLevel(sim.playTime, sim.score, fireModeRef.current);
+    const hitForgiveness = isNormalMode
+      ? Math.max(11, 16 - d * 0.45)
+      : Math.max(7, 12 - d * 0.55);
+    const visualKind: 'white' | 'fire' = isNormalMode ? 'fire' : 'white';
     const maxLen = Math.hypot(sim.width, sim.height);
 
     let anyHit = false;
@@ -537,6 +579,7 @@ export default function App() {
         hit: hitMosquitoIdx !== -1 || hitPowerUpIdx !== -1,
         life: 0.21,
         maxLife: 0.21,
+        kind: visualKind,
       });
 
       if (hitPowerUpIdx !== -1) {
@@ -585,18 +628,21 @@ export default function App() {
         const isBoss = target.kind === 'boss';
         const isGolden = target.kind === 'golden';
 
-        // Sticky splash at impact point
+        // Impact burst: fiery embers in Normal mode, sticky white splat in Chudling mode
         sim.splats.push({
           id: sim.nextId++,
           x: target.x,
           y: target.y,
           scale: isBoss ? 1.35 : isGolden ? 1.18 : 0.95 + Math.random() * 0.25,
           rotation: (Math.random() - 0.5) * 1.4,
-          life: 1.45,
-          maxLife: 1.45,
+          life: isNormalMode ? 0.65 : 1.45,
+          maxLife: isNormalMode ? 0.65 : 1.45,
+          kind: visualKind,
         });
 
-        const stickyPalette = ['#FFFFFF', '#F8FAFC', '#F1F5F9', 'rgba(255, 255, 255, 0.9)'];
+        const impactPalette = isNormalMode
+          ? ['#FEF08A', '#FACC15', '#F97316', '#EF4444']
+          : ['#FFFFFF', '#F8FAFC', '#F1F5F9', 'rgba(255, 255, 255, 0.9)'];
         for (let i = 0; i < (isBoss && target.hp <= 0 ? 26 : 16); i++) {
           const ang = Math.random() * Math.PI * 2;
           const spd = 65 + Math.random() * 190;
@@ -606,7 +652,7 @@ export default function App() {
             vx: Math.cos(ang) * spd,
             vy: Math.sin(ang) * spd - 35,
             size: 4.4 + Math.random() * 5.2,
-            color: stickyPalette[i % stickyPalette.length],
+            color: impactPalette[i % impactPalette.length],
             alpha: 1,
             life: 0.48 + Math.random() * 0.28,
             maxLife: 0.76,
@@ -692,8 +738,10 @@ export default function App() {
     const shotRateBoost = dtSinceLastShot < 1.5 ? Math.min(1.6, 0.36 / dtSinceLastShot) : 0.35;
     sim.fireMomentum = Math.min(2.0, Math.max(sim.fireMomentum * 0.65, 0) + shotRateBoost);
 
-    // Muzzle pure-white sticky liquid droplets at nozzle
-    const muzzlePalette = ['#FFFFFF', '#F8FAFC', 'rgba(255, 255, 255, 0.88)'];
+    // Muzzle burst particles: fiery sparks in Normal mode, white sticky droplets in Chudling mode
+    const muzzlePalette = isNormalMode
+      ? ['#FEF08A', '#FACC15', '#F97316']
+      : ['#FFFFFF', '#F8FAFC', 'rgba(255, 255, 255, 0.88)'];
     for (let i = 0; i < 6; i++) {
       const spread = sim.aimAngle + (Math.random() - 0.5) * 0.55;
       const spd = 90 + Math.random() * 140;
@@ -872,9 +920,27 @@ export default function App() {
       // Update active gameplay (difficulty ramps continuously with elapsed playTime & score)
       if (state === 'PLAYING') {
         sim.playTime += dt;
-        const d = getDifficultyLevel(sim.playTime, sim.score);
-        const maxActive =
-          d >= 6.8 ? 7 : d >= 5.0 ? 6 : d >= 3.6 ? 5 : d >= 2.4 ? 4 : d >= 1.4 ? 3 : d >= 0.65 ? 2 : 1;
+        const isNormalMode = fireModeRef.current === 'hand';
+        const d = getDifficultyLevel(sim.playTime, sim.score, fireModeRef.current);
+        const maxActive = isNormalMode
+          ? d >= 4.2
+            ? 4
+            : d >= 2.6
+              ? 3
+              : d >= 1.2
+                ? 2
+                : 1
+          : d >= 6.2
+            ? 6
+            : d >= 4.5
+              ? 5
+              : d >= 3.0
+                ? 4
+                : d >= 1.8
+                  ? 3
+                  : d >= 0.8
+                    ? 2
+                    : 1;
 
         // Spawn Boss Mosquito periodically when score reaches milestone
         const hasBossActive = sim.mosquitoes.some((m) => m.kind === 'boss');
@@ -886,7 +952,9 @@ export default function App() {
         sim.spawnTimer -= dt;
         if (sim.spawnTimer <= 0 && sim.mosquitoes.length < maxActive) {
           spawnMosquito(sim.score, sim.playTime, false);
-          sim.spawnTimer = Math.max(0.38, 1.65 - d * 0.22);
+          sim.spawnTimer = isNormalMode
+            ? Math.max(0.92, 2.1 - d * 0.14)
+            : Math.max(0.65, 1.85 - d * 0.16);
         }
 
         // Spawn Triple Shot power-up periodically
@@ -913,8 +981,8 @@ export default function App() {
         const bottomRoamBound = sim.height * 0.53;
         const leftBound = 32;
         const rightBound = sim.width - 32;
-        const wobbleAmp = 36 + Math.min(d * 8, 44);
-        const shiftRate = 1.5 + Math.min(d * 0.45, 2.8);
+        const wobbleAmp = 28 + Math.min(d * 5, 32);
+        const shiftRate = 0.9 + Math.min(d * 0.25, 1.6);
 
         for (let i = sim.mosquitoes.length - 1; i >= 0; i--) {
           const m = sim.mosquitoes[i];
@@ -928,10 +996,10 @@ export default function App() {
             m.x += m.vx * dt;
             m.y += (m.vy + Math.sin(m.wobblePhase) * wobbleAmp) * dt;
 
-            // Erratic mosquito dodging shifts increase over time
+            // Gentle mosquito dodging shifts increase gradually over time
             if (Math.random() < dt * shiftRate) {
               const spd = Math.hypot(m.vx, m.vy);
-              const shift = (Math.random() - 0.5) * 1.25;
+              const shift = (Math.random() - 0.5) * 1.1;
               const ang = Math.atan2(m.vy, m.vx) + shift;
               m.vx = Math.cos(ang) * spd;
               m.vy = Math.sin(ang) * spd;
@@ -958,7 +1026,9 @@ export default function App() {
 
             if (m.stateTimer <= 0) {
               m.state = 'telegraph';
-              m.stateTimer = Math.max(0.32, 0.62 - d * 0.045);
+              m.stateTimer = isNormalMode
+                ? Math.max(0.58, 0.88 - d * 0.03)
+                : Math.max(0.45, 0.72 - d * 0.03);
               m.diveTargetX = sleeper.x + (Math.random() - 0.5) * 28;
               m.diveTargetY = sleeper.y;
               soundEngine.playDiveAlert();
@@ -974,10 +1044,11 @@ export default function App() {
               const dx = m.diveTargetX - m.x;
               const dy = m.diveTargetY - m.y;
               const dist = Math.hypot(dx, dy) || 1;
+              const diveScale = isNormalMode ? 0.78 : 1;
               const diveSpeed =
-                m.kind === 'boss'
-                  ? 195 + Math.min(d * 24, 180)
-                  : 240 + Math.min(d * 42, 320);
+                (m.kind === 'boss'
+                  ? 180 + Math.min(d * 18, 130)
+                  : 210 + Math.min(d * 24, 180)) * diveScale;
               m.vx = (dx / dist) * diveSpeed;
               m.vy = (dy / dist) * diveSpeed;
             }
@@ -1278,7 +1349,7 @@ export default function App() {
   };
 
   const handleShareScore = async () => {
-    const modeLabel = fireMode === 'hand' ? 'Normal' : '3rd Leg';
+    const modeLabel = fireMode === 'hand' ? 'Normal' : 'Chudling';
     const text = `I scored ${score} pts (${zappedCount} mosquitoes zapped, ${bestCombo}x streak) in Chudling Pong (${modeLabel} mode)!`;
     try {
       if (navigator.share) {
@@ -1331,7 +1402,7 @@ export default function App() {
               resetSimulation(gameMode, false);
             }}
             aria-label="Return to main menu"
-            className={`pointer-events-auto w-11 h-11 rounded-full bg-white/15 hover:bg-white/25 border border-white/15 active:scale-95 text-white flex items-center justify-center shadow-sm transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
+            className={`pointer-events-auto w-11 h-11 rounded-full bg-zinc-900/90 hover:bg-zinc-800 border-2 border-white/35 active:scale-95 text-white flex items-center justify-center shadow-lg transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
               gameState === 'TITLE_MENU' ? 'opacity-0 pointer-events-none' : 'opacity-100'
             }`}
           >
@@ -1380,7 +1451,7 @@ export default function App() {
               type="button"
               onClick={toggleMute}
               aria-label={muted ? 'Unmute sound' : 'Mute sound'}
-              className="w-11 h-11 rounded-xl bg-white/12 hover:bg-white/22 border border-white/15 text-white flex items-center justify-center shadow-sm transition-all active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              className="w-11 h-11 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border-2 border-white/35 text-white flex items-center justify-center shadow-lg transition-all active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
             >
               {muted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
             </button>
@@ -1396,7 +1467,7 @@ export default function App() {
                   }
                 }}
                 aria-label={gameState === 'PAUSED' ? 'Resume game' : 'Pause game'}
-                className="w-11 h-11 rounded-xl bg-white/15 hover:bg-white/25 border border-white/15 active:scale-95 text-white flex items-center justify-center shadow-sm transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                className="w-11 h-11 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border-2 border-white/35 active:scale-95 text-white flex items-center justify-center shadow-lg transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
               >
                 {gameState === 'PAUSED' ? (
                   <Play className="w-5 h-5 fill-current" />
@@ -1411,35 +1482,35 @@ export default function App() {
         {/* Clean Two-Mode Title Menu Overlay */}
         {gameState === 'TITLE_MENU' && (
           <div className="absolute inset-x-0 top-16 bottom-0 flex flex-col items-center justify-start px-5 pt-5 pb-6 z-20 pointer-events-none">
-            <div className="pointer-events-auto w-full max-w-[324px] bg-white/94 backdrop-blur-sm border border-black/10 rounded-2xl p-4 shadow-[0_14px_34px_rgba(0,0,0,0.35)] flex flex-col gap-3">
+            <div className="pointer-events-auto w-full max-w-[324px] bg-white/95 backdrop-blur-sm border-2 border-black/15 rounded-2xl p-4 shadow-[0_14px_34px_rgba(0,0,0,0.45)] flex flex-col gap-3">
               <h1 className="font-display text-2xl font-extrabold tracking-tight text-center text-[#1E1C21]">
                 Chudling Pong
               </h1>
 
-              {/* 2 Playable Modes: Normal vs 3rd Leg */}
+              {/* 2 Playable Modes: Normal vs Chudling */}
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => selectFireMode('hand')}
-                  className={`flex items-center justify-center py-3 px-2.5 rounded-xl border text-center transition-all ${
+                  className={`flex items-center justify-center py-3 px-2.5 rounded-xl border-2 text-center transition-all ${
                     fireMode === 'hand'
                       ? 'bg-[#1E1C21] text-white border-[#1E1C21] shadow-sm'
-                      : 'bg-[#F4F1F0] text-[#232024] border-black/8 hover:bg-[#EAE6E4]'
+                      : 'bg-[#F4F1F0] text-[#1E1C21] border-zinc-300 hover:bg-[#E7E3E1]'
                   }`}
                 >
-                  <span className="text-sm font-bold leading-tight">Normal</span>
+                  <span className="text-sm font-extrabold leading-tight">Normal</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => selectFireMode('thirdLeg')}
-                  className={`flex items-center justify-center py-3 px-2.5 rounded-xl border text-center transition-all ${
+                  className={`flex items-center justify-center py-3 px-2.5 rounded-xl border-2 text-center transition-all ${
                     fireMode === 'thirdLeg'
                       ? 'bg-[#1E1C21] text-white border-[#1E1C21] shadow-sm'
-                      : 'bg-[#F4F1F0] text-[#232024] border-black/8 hover:bg-[#EAE6E4]'
+                      : 'bg-[#F4F1F0] text-[#1E1C21] border-zinc-300 hover:bg-[#E7E3E1]'
                   }`}
                 >
-                  <span className="text-sm font-bold leading-tight">3rd Leg</span>
+                  <span className="text-sm font-extrabold leading-tight">Chudling</span>
                 </button>
               </div>
 
@@ -1451,7 +1522,7 @@ export default function App() {
                 onChange={handleCustomPhotoUpload}
                 className="hidden"
               />
-              <div className="grid grid-cols-5 gap-1.5 bg-[#EFECEB] p-1 rounded-xl">
+              <div className="grid grid-cols-5 gap-1.5 bg-[#E7E3E1] p-1 rounded-xl border border-zinc-300">
                 {AVATAR_OPTIONS.map((opt) => {
                   const active = avatarStyle === opt.id;
                   return (
@@ -1462,7 +1533,9 @@ export default function App() {
                       aria-label={opt.label}
                       title={opt.label}
                       className={`py-1.5 text-base rounded-lg transition-all flex items-center justify-center ${
-                        active ? 'bg-white shadow-sm scale-[1.02]' : 'opacity-70 hover:opacity-100'
+                        active
+                          ? 'bg-white border border-zinc-300 shadow-sm scale-[1.02]'
+                          : 'opacity-75 hover:opacity-100'
                       }`}
                     >
                       {opt.emoji}
@@ -1476,8 +1549,8 @@ export default function App() {
                   title="Custom Photo"
                   className={`py-1.5 rounded-lg transition-all flex items-center justify-center ${
                     avatarStyle === 'custom' && hasCustomImage
-                      ? 'bg-white text-[#1E1C21] shadow-sm'
-                      : 'text-[#5E5A63] hover:text-[#1E1C21]'
+                      ? 'bg-white border border-zinc-300 text-[#1E1C21] shadow-sm'
+                      : 'text-[#3F3B45] hover:text-[#1E1C21]'
                   }`}
                 >
                   <Upload className="w-4 h-4" />
@@ -1487,53 +1560,59 @@ export default function App() {
               <button
                 type="button"
                 onClick={startGame}
-                className="w-full py-3 px-6 rounded-xl bg-[#EF4444] hover:bg-[#DC2626] active:scale-[0.98] text-white font-bold text-base shadow-[0_6px_18px_rgba(239,68,68,0.28)] transition-all whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1E1C21]"
+                className="w-full py-3.5 px-6 rounded-xl bg-[#EF4444] hover:bg-[#DC2626] border-2 border-red-700/40 active:scale-[0.98] text-white font-extrabold text-base shadow-[0_6px_18px_rgba(239,68,68,0.32)] transition-all whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1E1C21]"
               >
                 Start Game
               </button>
 
               <button
                 type="button"
-                onClick={() => setLeaderboardOpen(true)}
-                className="w-full py-2.5 px-4 rounded-xl bg-[#EFECEB] hover:bg-[#E4E0DE] text-[#1E1C21] font-bold text-xs inline-flex items-center justify-center gap-2 transition-colors"
+                onClick={() => {
+                  const cached = loadCachedLeaderboard();
+                  if (cached.length > 0 && (!navigator.onLine || leaderboardEntries.length === 0)) {
+                    setLeaderboardEntries(cached);
+                    setLeaderboardLoading(false);
+                    setLeaderboardError(null);
+                  }
+                  setLeaderboardOpen(true);
+                }}
+                className="w-full py-2.5 px-4 rounded-xl bg-amber-100 hover:bg-amber-200 border-2 border-amber-300 text-[#1E1C21] font-extrabold text-xs inline-flex items-center justify-center gap-2 transition-colors shadow-sm"
               >
-                <Trophy className="w-4 h-4 text-amber-500" />
+                <Trophy className="w-4 h-4 text-amber-600" />
                 Global Leaderboard
               </button>
 
-              <div className="bg-[#18181F] rounded-xl">
-                <PWAInstallButton />
-              </div>
+              <PWAInstallButton />
             </div>
           </div>
         )}
 
         {/* Pause Modal */}
         {gameState === 'PAUSED' && (
-          <div className="absolute inset-0 bg-black/35 backdrop-blur-[2px] flex items-center justify-center px-6 z-30">
-            <div className="w-full max-w-[310px] bg-white rounded-2xl p-6 border border-black/10 shadow-xl flex flex-col gap-3 text-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px] flex items-center justify-center px-6 z-30">
+            <div className="w-full max-w-[310px] bg-white rounded-2xl p-6 border-2 border-black/15 shadow-2xl flex flex-col gap-3 text-center">
               <h2 className="font-display text-2xl font-extrabold text-[#1E1C21]">Paused</h2>
-              <p className="text-sm text-[#5A5660] tabular-nums">
+              <p className="text-sm font-semibold text-[#4B4751] tabular-nums">
                 Score {score} · Best {bestScore}
               </p>
               <button
                 type="button"
                 onClick={() => setGameState('PLAYING')}
-                className="mt-2 w-full py-3 px-5 rounded-xl bg-[#232024] hover:bg-[#18161A] text-white font-bold text-sm transition-colors whitespace-nowrap shrink-0"
+                className="mt-2 w-full py-3 px-5 rounded-xl bg-[#1E1C21] hover:bg-black border-2 border-[#1E1C21] text-white font-extrabold text-sm transition-colors whitespace-nowrap shrink-0 shadow-sm"
               >
                 Resume
               </button>
               <button
                 type="button"
                 onClick={startGame}
-                className="w-full py-3 px-5 rounded-xl bg-[#EFECEB] hover:bg-[#E4E0DE] text-[#1E1C21] font-bold text-sm transition-colors whitespace-nowrap shrink-0"
+                className="w-full py-3 px-5 rounded-xl bg-[#F4F1F0] hover:bg-[#E7E3E1] border-2 border-zinc-300 text-[#1E1C21] font-bold text-sm transition-colors whitespace-nowrap shrink-0"
               >
                 Restart
               </button>
               <button
                 type="button"
                 onClick={() => resetSimulation(gameMode, false)}
-                className="w-full py-2.5 px-5 rounded-xl text-[#5E5A63] hover:text-[#1E1C21] font-semibold text-sm transition-colors whitespace-nowrap shrink-0"
+                className="w-full py-2.5 px-5 rounded-xl bg-white hover:bg-zinc-100 border-2 border-zinc-300 text-[#1E1C21] font-bold text-sm transition-colors whitespace-nowrap shrink-0"
               >
                 Main Menu
               </button>
@@ -1543,9 +1622,9 @@ export default function App() {
 
         {/* Game Over Modal */}
         {gameState === 'GAME_OVER' && (
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center px-6 z-30">
-            <div className="w-full max-w-[324px] bg-white rounded-2xl p-6 border border-black/10 shadow-xl flex flex-col items-center text-center">
-              <span className="text-xs font-bold uppercase tracking-wider text-[#DC2626]">
+          <div className="absolute inset-0 bg-black/55 backdrop-blur-[2px] flex items-center justify-center px-6 z-30">
+            <div className="w-full max-w-[324px] bg-white rounded-2xl p-6 border-2 border-black/15 shadow-2xl flex flex-col items-center text-center">
+              <span className="text-xs font-extrabold uppercase tracking-wider text-[#DC2626]">
                 Mosquito Bit You
               </span>
               <h2 className="mt-1 font-display text-3xl font-extrabold text-[#1E1C21]">
@@ -1556,10 +1635,10 @@ export default function App() {
                 <span className="font-display text-5xl font-extrabold text-[#1E1C21] tabular-nums">
                   {score}
                 </span>
-                <span className="text-sm font-bold text-[#5E5A63]">pts</span>
+                <span className="text-sm font-bold text-[#4B4751]">pts</span>
               </div>
 
-              <div className="mt-2 flex items-center gap-2 text-xs font-semibold text-[#5E5A63] tabular-nums">
+              <div className="mt-2 flex items-center gap-2 text-xs font-bold text-[#4B4751] tabular-nums">
                 <span>{isNewBest ? 'New Best Score' : `Best ${bestScore}`}</span>
                 <span aria-hidden="true">·</span>
                 <span>{zappedCount} Zapped</span>
@@ -1568,13 +1647,13 @@ export default function App() {
               </div>
 
               {cloudStatus && (
-                <p className="mt-2 text-[11px] font-bold text-emerald-600">{cloudStatus}</p>
+                <p className="mt-2 text-[11px] font-bold text-emerald-700">{cloudStatus}</p>
               )}
 
               <button
                 type="button"
                 onClick={startGame}
-                className="mt-5 w-full py-3.5 px-6 rounded-xl bg-[#EF4444] hover:bg-[#DC2626] active:scale-[0.98] text-white font-bold text-base shadow-[0_6px_18px_rgba(239,68,68,0.28)] inline-flex items-center justify-center gap-2 transition-all whitespace-nowrap shrink-0"
+                className="mt-5 w-full py-3.5 px-6 rounded-xl bg-[#EF4444] hover:bg-[#DC2626] border-2 border-red-700/40 active:scale-[0.98] text-white font-extrabold text-base shadow-[0_6px_18px_rgba(239,68,68,0.32)] inline-flex items-center justify-center gap-2 transition-all whitespace-nowrap shrink-0"
               >
                 <RotateCcw className="w-4 h-4" />
                 Play Again
@@ -1584,17 +1663,25 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleShareScore}
-                  className="py-2.5 px-3 rounded-xl bg-[#EFECEB] hover:bg-[#E4E0DE] text-[#1E1C21] font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors"
+                  className="py-2.5 px-3 rounded-xl bg-[#F4F1F0] hover:bg-[#E7E3E1] border-2 border-zinc-300 text-[#1E1C21] font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors"
                 >
                   <Share2 className="w-3.5 h-3.5" />
                   {shareLabel}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setLeaderboardOpen(true)}
-                  className="py-2.5 px-3 rounded-xl bg-[#EFECEB] hover:bg-[#E4E0DE] text-[#1E1C21] font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors"
+                  onClick={() => {
+                    const cached = loadCachedLeaderboard();
+                    if (cached.length > 0 && (!navigator.onLine || leaderboardEntries.length === 0)) {
+                      setLeaderboardEntries(cached);
+                      setLeaderboardLoading(false);
+                      setLeaderboardError(null);
+                    }
+                    setLeaderboardOpen(true);
+                  }}
+                  className="py-2.5 px-3 rounded-xl bg-amber-100 hover:bg-amber-200 border-2 border-amber-300 text-[#1E1C21] font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors"
                 >
-                  <Trophy className="w-3.5 h-3.5 text-amber-500" />
+                  <Trophy className="w-3.5 h-3.5 text-amber-600" />
                   Leaderboard
                 </button>
               </div>
@@ -1602,7 +1689,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => resetSimulation(gameMode, false)}
-                className="mt-2 w-full py-2 px-4 rounded-xl text-[#5E5A63] hover:text-[#1E1C21] font-semibold text-sm transition-colors whitespace-nowrap shrink-0"
+                className="mt-2.5 w-full py-2.5 px-4 rounded-xl bg-white hover:bg-zinc-100 border-2 border-zinc-300 text-[#1E1C21] font-bold text-sm transition-colors whitespace-nowrap shrink-0"
               >
                 Main Menu
               </button>
@@ -1624,6 +1711,7 @@ export default function App() {
         bestMode={fireMode}
         bestZapped={zappedCount}
         bestCombo={bestCombo}
+        onEntriesRefresh={() => setLeaderboardEntries(loadCachedLeaderboard())}
       />
 
       <OfflineIndicator />
