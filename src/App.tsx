@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import { soundEngine } from './audio/soundEngine';
 import { LeaderboardModal } from './components/LeaderboardModal';
-import { OfflineIndicator } from './components/OfflineIndicator';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import {
   fetchUserCloudScore,
@@ -44,8 +43,13 @@ import {
   SleeperMood,
   ZzzBubble,
 } from './game/types';
+import { shareChudlingPong } from './utils/shareCard';
 
 const BEST_SCORE_KEY = 'sleepy_zapper_best_v1';
+const BEST_ZAPPED_KEY = 'sleepy_zapper_best_zapped_v1';
+const BEST_COMBO_KEY = 'sleepy_zapper_best_combo_v1';
+const BEST_MODE_KEY = 'sleepy_zapper_best_mode_v1';
+const BEST_OWNER_KEY = 'sleepy_zapper_best_owner_v1';
 const AVATAR_STYLE_KEY = 'sleepy_zapper_avatar_v1';
 const FIRE_MODE_KEY = 'sleepy_zapper_fire_mode_v1';
 
@@ -60,6 +64,40 @@ function loadBestScore(): number {
   if (typeof window === 'undefined') return 0;
   const parsed = Number.parseInt(localStorage.getItem(BEST_SCORE_KEY) || '0', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function loadBestOwner(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(BEST_OWNER_KEY);
+}
+
+function loadBestMeta(): { zappedCount: number; bestCombo: number; fireMode: FireMode } {
+  if (typeof window === 'undefined') {
+    return { zappedCount: 0, bestCombo: 0, fireMode: 'thirdLeg' };
+  }
+  const zapped = Number.parseInt(localStorage.getItem(BEST_ZAPPED_KEY) || '0', 10);
+  const combo = Number.parseInt(localStorage.getItem(BEST_COMBO_KEY) || '0', 10);
+  const mode = localStorage.getItem(BEST_MODE_KEY);
+  return {
+    zappedCount: Number.isFinite(zapped) && zapped > 0 ? zapped : 0,
+    bestCombo: Number.isFinite(combo) && combo > 0 ? combo : 0,
+    fireMode: mode === 'hand' || mode === 'thirdLeg' ? mode : loadFireMode(),
+  };
+}
+
+function saveBestRecord(
+  score: number,
+  mode: FireMode,
+  zapped: number,
+  combo: number,
+  ownerUid: string
+): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(BEST_SCORE_KEY, String(score));
+  localStorage.setItem(BEST_ZAPPED_KEY, String(zapped));
+  localStorage.setItem(BEST_COMBO_KEY, String(combo));
+  localStorage.setItem(BEST_MODE_KEY, mode);
+  localStorage.setItem(BEST_OWNER_KEY, ownerUid);
 }
 
 function loadAvatarStyle(): AvatarStyle {
@@ -138,7 +176,6 @@ export default function App() {
     () => loadCachedLeaderboard().length === 0
   );
   const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
-  const [cloudStatus, setCloudStatus] = useState<string | null>(null);
   const [shareLabel, setShareLabel] = useState<string>('Share');
 
   // Mutable simulation state inside ref for smooth 60fps loop
@@ -149,6 +186,7 @@ export default function App() {
     playTime: 0,
     score: 0,
     bestScore: loadBestScore(),
+    crossedBestThisRun: false,
     lives: 3,
     combo: 0,
     bestCombo: 0,
@@ -205,49 +243,61 @@ export default function App() {
     typeof window !== 'undefined' &&
     window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
-  const cloudSyncTimerRef = useRef<number | null>(null);
-
   const syncRunToCloud = useCallback(
     async (finalScore: number, mode: FireMode, zapped: number, combo: number) => {
       if (finalScore <= 0) return;
       try {
         const cleanName = saveLocalPlayerName(playerNameRef.current);
-        const res = await submitLeaderboardScore({
+        const syncPromise = submitLeaderboardScore({
           playerName: cleanName,
           score: finalScore,
           fireMode: mode,
           zappedCount: zapped,
           bestCombo: combo,
         });
-        if (res.offlineQueued) {
-          setLeaderboardEntries(loadCachedLeaderboard());
-          setLeaderboardLoading(false);
-          setLeaderboardError(null);
-          setCloudStatus(`Saved ${res.bestScore} pts offline (auto-syncs online).`);
-        } else if (res.saved) {
-          setLeaderboardEntries(loadCachedLeaderboard());
-          setCloudStatus(`Auto-saved ${res.bestScore} pts to Leaderboard!`);
-        }
+        setLeaderboardEntries(loadCachedLeaderboard());
+        setLeaderboardLoading(false);
+        setLeaderboardError(null);
+        await syncPromise;
+        setLeaderboardEntries(loadCachedLeaderboard());
       } catch {
-        // Handled cleanly in structured logger; keep cached leaderboard visible
         setLeaderboardEntries(loadCachedLeaderboard());
       }
     },
     []
   );
 
-  const scheduleAutoCloudSync = useCallback(() => {
-    if (cloudSyncTimerRef.current !== null) {
-      window.clearTimeout(cloudSyncTimerRef.current);
-    }
-    cloudSyncTimerRef.current = window.setTimeout(() => {
-      cloudSyncTimerRef.current = null;
+  const settleCurrentRun = useCallback(
+    (isGameOver: boolean) => {
       const sim = simRef.current;
-      if (sim.score > 0) {
-        syncRunToCloud(sim.score, fireModeRef.current, sim.zappedCount, sim.bestCombo);
+      const finalScore = sim.score;
+      const prevSavedBest = sim.bestScore;
+      const beatSavedBest = finalScore > prevSavedBest;
+
+      if (beatSavedBest) {
+        sim.bestScore = finalScore;
+        saveBestRecord(
+          finalScore,
+          fireModeRef.current,
+          sim.zappedCount,
+          sim.bestCombo,
+          getActivePlayerUid()
+        );
+        setBestScore(finalScore);
+      } else {
+        setBestScore(prevSavedBest);
       }
-    }, 2500);
-  }, [syncRunToCloud]);
+
+      if (isGameOver) {
+        setIsNewBest(beatSavedBest);
+      }
+
+      if (finalScore > 0) {
+        void syncRunToCloud(finalScore, fireModeRef.current, sim.zappedCount, sim.bestCombo);
+      }
+    },
+    [syncRunToCloud]
+  );
 
   // Auth & Top-20 Leaderboard subscriptions + offline queue flush & automatic score sync
   useEffect(() => {
@@ -258,38 +308,80 @@ export default function App() {
       playerNameRef.current = resolvedName;
 
       const activeUid = nextUser ? nextUser.uid : getActivePlayerUid();
+      const storedOwner = loadBestOwner();
+      const switchedFromGoogleToGuest =
+        !nextUser && Boolean(storedOwner) && !storedOwner!.startsWith('guest_');
 
       if (typeof navigator !== 'undefined' && navigator.onLine) {
         try {
           await flushPendingOfflineSync();
           const cloudEntry = await fetchUserCloudScore(activeUid);
+          if (switchedFromGoogleToGuest) {
+            const guestScore = cloudEntry ? cloudEntry.score : 0;
+            simRef.current.bestScore = guestScore;
+            setBestScore(guestScore);
+            saveBestRecord(
+              guestScore,
+              cloudEntry ? cloudEntry.fireMode : fireModeRef.current,
+              cloudEntry ? cloudEntry.zappedCount : 0,
+              cloudEntry ? cloudEntry.bestCombo : 0,
+              activeUid
+            );
+            return;
+          }
+
           const localBest = simRef.current.bestScore;
           if (cloudEntry && cloudEntry.score > localBest) {
             simRef.current.bestScore = cloudEntry.score;
             setBestScore(cloudEntry.score);
-            localStorage.setItem(BEST_SCORE_KEY, String(cloudEntry.score));
+            saveBestRecord(
+              cloudEntry.score,
+              cloudEntry.fireMode,
+              cloudEntry.zappedCount,
+              cloudEntry.bestCombo,
+              activeUid
+            );
           } else if (localBest > 0 && (!cloudEntry || localBest > cloudEntry.score)) {
-            const sim = simRef.current;
+            const bestMeta = loadBestMeta();
             await submitLeaderboardScore({
               playerName: saveLocalPlayerName(resolvedName),
               score: localBest,
-              fireMode: fireModeRef.current,
-              zappedCount: Math.max(sim.zappedCount, localBest),
-              bestCombo: sim.bestCombo,
+              fireMode: bestMeta.fireMode,
+              zappedCount: bestMeta.zappedCount,
+              bestCombo: bestMeta.bestCombo,
             });
-            setCloudStatus(`Auto-saved ${localBest} pts to Leaderboard!`);
+            saveBestRecord(
+              localBest,
+              bestMeta.fireMode,
+              bestMeta.zappedCount,
+              bestMeta.bestCombo,
+              activeUid
+            );
+            setLeaderboardEntries(loadCachedLeaderboard());
           }
         } catch {
           // Structured error already logged if needed
         }
+      } else if (switchedFromGoogleToGuest) {
+        const cachedGuest = loadCachedLeaderboard().find((row) => row.uid === activeUid);
+        const guestScore = cachedGuest ? cachedGuest.score : 0;
+        simRef.current.bestScore = guestScore;
+        setBestScore(guestScore);
+        saveBestRecord(
+          guestScore,
+          cachedGuest ? cachedGuest.fireMode : fireModeRef.current,
+          cachedGuest ? cachedGuest.zappedCount : 0,
+          cachedGuest ? cachedGuest.bestCombo : 0,
+          activeUid
+        );
       } else if (simRef.current.bestScore > 0) {
-        const sim = simRef.current;
+        const bestMeta = loadBestMeta();
         await submitLeaderboardScore({
           playerName: saveLocalPlayerName(resolvedName),
-          score: sim.bestScore,
-          fireMode: fireModeRef.current,
-          zappedCount: Math.max(sim.zappedCount, sim.bestScore),
-          bestCombo: sim.bestCombo,
+          score: simRef.current.bestScore,
+          fireMode: bestMeta.fireMode,
+          zappedCount: bestMeta.zappedCount,
+          bestCombo: bestMeta.bestCombo,
         });
         setLeaderboardEntries(loadCachedLeaderboard());
         setLeaderboardLoading(false);
@@ -312,42 +404,48 @@ export default function App() {
           setLeaderboardError(
             err instanceof Error && err.message.includes('Quota exceeded')
               ? 'Daily Firestore quota exceeded. Try again tomorrow.'
-              : 'Offline mode: play a round to see your score here.'
+              : 'No scores available offline.'
           );
         }
       },
       20
     );
 
+    const resetTransientInputs = () => {
+      const sim = simRef.current;
+      sim.keysPressed.left = false;
+      sim.keysPressed.right = false;
+      sim.isAiming = false;
+      sim.pointerId = null;
+    };
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
-        const sim = simRef.current;
-        if (sim.score > 0) {
-          syncRunToCloud(sim.score, fireModeRef.current, sim.zappedCount, sim.bestCombo);
+        resetTransientInputs();
+        soundEngine.stopThirdLegEffect();
+        if (gameStateRef.current === 'PLAYING' && simRef.current.score > 0) {
+          settleCurrentRun(false);
         }
       }
     };
 
     const handleReconnect = async () => {
-      const res = await flushPendingOfflineSync();
-      if (res.synced && res.bestScore) {
-        setCloudStatus(`Synced offline ${res.bestScore} pts to Leaderboard!`);
-      }
+      await flushPendingOfflineSync();
+      setLeaderboardEntries(loadCachedLeaderboard());
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', resetTransientInputs);
     window.addEventListener('online', handleReconnect);
 
     return () => {
       unsubAuth();
       unsubBoard();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', resetTransientInputs);
       window.removeEventListener('online', handleReconnect);
-      if (cloudSyncTimerRef.current !== null) {
-        window.clearTimeout(cloudSyncTimerRef.current);
-      }
     };
-  }, [syncRunToCloud]);
+  }, [settleCurrentRun]);
 
   const spawnMosquito = useCallback(
     (currentScore: number, playTime: number, forceBoss: boolean = false) => {
@@ -439,11 +537,12 @@ export default function App() {
     (mode: GameMode, startPlaying: boolean) => {
       const sim = simRef.current;
       if (sim.score > 0 && gameStateRef.current !== 'GAME_OVER') {
-        syncRunToCloud(sim.score, fireModeRef.current, sim.zappedCount, sim.bestCombo);
+        settleCurrentRun(false);
       }
       const initialLives = mode === 'classic' ? 1 : 3;
       sim.playTime = 0;
       sim.score = 0;
+      sim.crossedBestThisRun = false;
       sim.lives = initialLives;
       sim.combo = 0;
       sim.bestCombo = 0;
@@ -463,6 +562,7 @@ export default function App() {
       sim.splats = [];
       sim.particles = [];
       sim.floatingTexts = [];
+      sim.zzzBubbles = [];
       sim.sleeperMood = 'idle';
       sim.moodTimer = 0;
       sim.shakeTime = 0;
@@ -471,13 +571,13 @@ export default function App() {
       sim.lastShotTime = -10;
 
       setScore(0);
+      setBestScore(sim.bestScore);
       setIsNewBest(false);
       setLives(initialLives);
       setMaxLives(initialLives);
       setZappedCount(0);
       setBestCombo(0);
       setTripleShotSeconds(0);
-      setCloudStatus(null);
       setShareLabel('Share');
 
       soundEngine.stopThirdLegEffect();
@@ -488,7 +588,7 @@ export default function App() {
         setGameState('TITLE_MENU');
       }
     },
-    [spawnMosquito, syncRunToCloud]
+    [settleCurrentRun, spawnMosquito]
   );
 
   const startGame = useCallback(() => {
@@ -697,17 +797,13 @@ export default function App() {
 
           sim.score += points;
           setScore(sim.score);
+          setBestScore(Math.max(sim.bestScore, sim.score));
 
-          if (sim.score > sim.bestScore) {
-            const crossedOldBest = sim.bestScore > 0 && sim.score - points <= sim.bestScore;
-            sim.bestScore = sim.score;
-            setBestScore(sim.bestScore);
-            setIsNewBest(true);
-            localStorage.setItem(BEST_SCORE_KEY, String(sim.bestScore));
-            if (crossedOldBest) {
+          if (sim.score > sim.bestScore && !sim.crossedBestThisRun) {
+            sim.crossedBestThisRun = true;
+            if (sim.bestScore > 0) {
               soundEngine.playNewBest();
             }
-            scheduleAutoCloudSync();
           }
 
           const label = isBoss
@@ -788,6 +884,7 @@ export default function App() {
       if (sim.score > 0) {
         sim.score = Math.max(0, sim.score - 1);
         setScore(sim.score);
+        setBestScore(Math.max(sim.bestScore, sim.score));
         sim.floatingTexts.push({
           x: origin.x + missDx * 120,
           y: origin.y + missDy * 120,
@@ -804,7 +901,7 @@ export default function App() {
         soundEngine.playThirdLegMiss();
       }
     }
-  }, [prefersReducedMotion, scheduleAutoCloudSync]);
+  }, [prefersReducedMotion]);
 
   // Resize canvas crisply for HiDPI displays
   useEffect(() => {
@@ -891,11 +988,11 @@ export default function App() {
         sim.biteFlashAlpha = Math.max(0, sim.biteFlashAlpha - dt * 2.4);
       }
 
-      // Ambient Zzz bubbles on title or idle playing
-      if (state === 'TITLE_MENU' || (state === 'PLAYING' && !sim.isAiming && sim.sleeperMood === 'idle')) {
+      // Ambient Zzz bubbles while idle during gameplay
+      if (state === 'PLAYING' && !sim.isAiming && sim.sleeperMood === 'idle') {
         sim.zzzTimer -= dt;
         if (sim.zzzTimer <= 0) {
-          sim.zzzTimer = state === 'TITLE_MENU' ? 0.9 : 1.5;
+          sim.zzzTimer = 1.5;
           const sleeper = getSleeperTarget(sim.width, sim.height);
           sim.zzzBubbles.push({
             x: sleeper.x - 16 + (Math.random() - 0.5) * 12,
@@ -1093,7 +1190,7 @@ export default function App() {
                 sim.isAiming = false;
                 sim.pointerId = null;
                 setGameState('GAME_OVER');
-                syncRunToCloud(sim.score, fireModeRef.current, sim.zappedCount, sim.bestCombo);
+                settleCurrentRun(true);
               } else {
                 sim.spawnTimer = Math.min(sim.spawnTimer, 0.45);
               }
@@ -1147,6 +1244,7 @@ export default function App() {
           width: sim.width,
           height: sim.height,
           time: sim.time,
+          gameState: state,
           originX: origin.x,
           originY: origin.y,
           aimAngle: sim.aimAngle,
@@ -1176,7 +1274,7 @@ export default function App() {
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [prefersReducedMotion, spawnMosquito, spawnPowerUp, syncRunToCloud]);
+  }, [prefersReducedMotion, settleCurrentRun, spawnMosquito, spawnPowerUp]);
 
   // Keyboard support (Left/Right or A/D to aim, Space/Enter to fire, Escape/P to pause)
   useEffect(() => {
@@ -1264,7 +1362,11 @@ export default function App() {
     sim.isAiming = true;
     sim.dragStartY = py;
     sim.pointerMovedDist = 0;
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Ignore if pointer capture is unavailable
+    }
     updateAimFromPointer(e.clientX, e.clientY, true);
     if (rect) {
       sim.dragStartX = px;
@@ -1295,8 +1397,12 @@ export default function App() {
     updateAimFromPointer(e.clientX, e.clientY, false);
     sim.isAiming = false;
     sim.pointerId = null;
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // Ignore if pointer already released
     }
     fireBeam();
   };
@@ -1348,32 +1454,23 @@ export default function App() {
     e.target.value = '';
   };
 
-  const handleShareScore = async () => {
-    const modeLabel = fireMode === 'hand' ? 'Normal' : 'Chudling';
-    const text = `I scored ${score} pts (${zappedCount} mosquitoes zapped, ${bestCombo}x streak) in Chudling Pong (${modeLabel} mode)!`;
-    try {
-      if (navigator.share) {
-        await navigator.share({
-          title: 'Chudling Pong',
-          text,
-          url: window.location.origin,
-        });
-        setShareLabel('Shared!');
-      } else if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(`${text} ${window.location.origin}`);
-        setShareLabel('Copied!');
-      }
-    } catch {
-      try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(`${text} ${window.location.origin}`);
-          setShareLabel('Copied!');
-        }
-      } catch {
-        // Ignore user cancel
-      }
+  const handleShareScore = async (inviteOnly: boolean = false) => {
+    const result = await shareChudlingPong({
+      score,
+      bestScore,
+      zappedCount,
+      bestCombo,
+      fireMode,
+      playerName,
+      isGameInviteOnly: inviteOnly,
+    });
+    if (result === 'shared') {
+      setShareLabel('Shared!');
+      setTimeout(() => setShareLabel('Share'), 2000);
+    } else if (result === 'copied') {
+      setShareLabel('Copied!');
+      setTimeout(() => setShareLabel('Share'), 2000);
     }
-    setTimeout(() => setShareLabel('Share'), 2000);
   };
 
   return (
@@ -1409,15 +1506,15 @@ export default function App() {
             <X className="w-5 h-5" strokeWidth={2.75} />
           </button>
 
-          {/* Top-Center Score + BEST + Sleep Hearts + Triple Shot indicator */}
-          <div className="flex flex-col items-center text-center pt-1">
-            <span className="font-display text-4xl font-extrabold leading-none tracking-tight text-white tabular-nums">
-              {score}
-            </span>
-            <span className="mt-1 text-[11px] font-bold tracking-wider uppercase text-zinc-400 tabular-nums">
-              BEST {bestScore}
-            </span>
-            {gameState !== 'TITLE_MENU' && (
+          {/* Top-Center Score + BEST + Sleep Hearts + Triple Shot indicator (hidden on Title Showcase) */}
+          {gameState !== 'TITLE_MENU' ? (
+            <div className="flex flex-col items-center text-center pt-1">
+              <span className="font-display text-4xl font-extrabold leading-none tracking-tight text-white tabular-nums">
+                {score}
+              </span>
+              <span className="mt-1 text-[11px] font-bold tracking-wider uppercase text-zinc-400 tabular-nums">
+                BEST {bestScore}
+              </span>
               <div
                 className="mt-2 flex items-center gap-1.5"
                 aria-label={`Lives remaining: ${lives} of ${maxLives}`}
@@ -1436,14 +1533,16 @@ export default function App() {
                   );
                 })}
               </div>
-            )}
-            {gameState === 'PLAYING' && tripleShotSeconds > 0 && (
-              <div className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-sky-500/25 border border-sky-400/50 px-2 py-0.5 text-[11px] font-extrabold text-sky-200 tabular-nums">
-                <Zap className="w-3 h-3 fill-sky-300 text-sky-300" />
-                3X SHOT {tripleShotSeconds}s
-              </div>
-            )}
-          </div>
+              {gameState === 'PLAYING' && tripleShotSeconds > 0 && (
+                <div className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-sky-500/25 border border-sky-400/50 px-2 py-0.5 text-[11px] font-extrabold text-sky-200 tabular-nums">
+                  <Zap className="w-3 h-3 fill-sky-300 text-sky-300" />
+                  3X SHOT {tripleShotSeconds}s
+                </div>
+              )}
+            </div>
+          ) : (
+            <div aria-hidden="true" />
+          )}
 
           {/* Top-Right Sound & Pause buttons */}
           <div className="pointer-events-auto flex items-center gap-2">
@@ -1479,42 +1578,21 @@ export default function App() {
           </div>
         </header>
 
-        {/* Clean Two-Mode Title Menu Overlay */}
+        {/* Bottom-Docked Sleek Main Menu Overlay (Standing Character Showcase Above) */}
         {gameState === 'TITLE_MENU' && (
-          <div className="absolute inset-x-0 top-16 bottom-0 flex flex-col items-center justify-start px-5 pt-5 pb-6 z-20 pointer-events-none">
-            <div className="pointer-events-auto w-full max-w-[324px] bg-white/95 backdrop-blur-sm border-2 border-black/15 rounded-2xl p-4 shadow-[0_14px_34px_rgba(0,0,0,0.45)] flex flex-col gap-3">
-              <h1 className="font-display text-2xl font-extrabold tracking-tight text-center text-[#1E1C21]">
-                Chudling Pong
-              </h1>
-
-              {/* 2 Playable Modes: Normal vs Chudling */}
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => selectFireMode('hand')}
-                  className={`flex items-center justify-center py-3 px-2.5 rounded-xl border-2 text-center transition-all ${
-                    fireMode === 'hand'
-                      ? 'bg-[#1E1C21] text-white border-[#1E1C21] shadow-sm'
-                      : 'bg-[#F4F1F0] text-[#1E1C21] border-zinc-300 hover:bg-[#E7E3E1]'
-                  }`}
-                >
-                  <span className="text-sm font-extrabold leading-tight">Normal</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => selectFireMode('thirdLeg')}
-                  className={`flex items-center justify-center py-3 px-2.5 rounded-xl border-2 text-center transition-all ${
-                    fireMode === 'thirdLeg'
-                      ? 'bg-[#1E1C21] text-white border-[#1E1C21] shadow-sm'
-                      : 'bg-[#F4F1F0] text-[#1E1C21] border-zinc-300 hover:bg-[#E7E3E1]'
-                  }`}
-                >
-                  <span className="text-sm font-extrabold leading-tight">Chudling</span>
-                </button>
+          <div className="absolute inset-0 flex flex-col items-center justify-end px-3.5 pb-3.5 sm:px-4 sm:pb-4 z-20 pointer-events-none">
+            <div className="pointer-events-auto w-full max-w-[396px] rounded-[24px] bg-[#121218]/92 backdrop-blur-md border border-white/14 p-3.5 sm:p-4 shadow-[0_-12px_40px_rgba(0,0,0,0.75)] flex flex-col gap-2.5">
+              {/* Title + Best Score Row */}
+              <div className="flex items-baseline justify-between gap-2 px-0.5">
+                <h1 className="font-display text-xl sm:text-2xl font-extrabold tracking-tight text-white leading-none">
+                  Chudling Pong
+                </h1>
+                <span className="text-xs font-extrabold text-amber-300 tabular-nums whitespace-nowrap shrink-0">
+                  Best {bestScore}
+                </span>
               </div>
 
-              {/* Minimal single-row face selector */}
+              {/* Character Picker (Transforms the standing character above live) */}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1522,7 +1600,7 @@ export default function App() {
                 onChange={handleCustomPhotoUpload}
                 className="hidden"
               />
-              <div className="grid grid-cols-5 gap-1.5 bg-[#E7E3E1] p-1 rounded-xl border border-zinc-300">
+              <div className="grid grid-cols-5 gap-1.5">
                 {AVATAR_OPTIONS.map((opt) => {
                   const active = avatarStyle === opt.id;
                   return (
@@ -1531,14 +1609,17 @@ export default function App() {
                       type="button"
                       onClick={() => selectAvatar(opt.id)}
                       aria-label={opt.label}
-                      title={opt.label}
-                      className={`py-1.5 text-base rounded-lg transition-all flex items-center justify-center ${
+                      aria-pressed={active}
+                      className={`min-h-[48px] py-1.5 px-1 rounded-xl border transition-all flex flex-col items-center justify-center gap-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
                         active
-                          ? 'bg-white border border-zinc-300 shadow-sm scale-[1.02]'
-                          : 'opacity-75 hover:opacity-100'
+                          ? 'bg-white/16 border-white/60 text-white shadow-sm'
+                          : 'bg-white/5 border-white/10 text-zinc-400 hover:bg-white/10 hover:text-zinc-200'
                       }`}
                     >
-                      {opt.emoji}
+                      <span className="text-base leading-none">{opt.emoji}</span>
+                      <span className="text-[10px] font-bold leading-none whitespace-nowrap">
+                        {opt.label}
+                      </span>
                     </button>
                   );
                 })}
@@ -1546,41 +1627,87 @@ export default function App() {
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   aria-label="Upload custom face photo"
-                  title="Custom Photo"
-                  className={`py-1.5 rounded-lg transition-all flex items-center justify-center ${
+                  aria-pressed={avatarStyle === 'custom' && hasCustomImage}
+                  className={`min-h-[48px] py-1.5 px-1 rounded-xl border transition-all flex flex-col items-center justify-center gap-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
                     avatarStyle === 'custom' && hasCustomImage
-                      ? 'bg-white border border-zinc-300 text-[#1E1C21] shadow-sm'
-                      : 'text-[#3F3B45] hover:text-[#1E1C21]'
+                      ? 'bg-white/16 border-white/60 text-white shadow-sm'
+                      : 'bg-white/5 border-white/10 text-zinc-400 hover:bg-white/10 hover:text-zinc-200'
                   }`}
                 >
-                  <Upload className="w-4 h-4" />
+                  <Upload className="w-4 h-4 shrink-0" />
+                  <span className="text-[10px] font-bold leading-none whitespace-nowrap">
+                    Photo
+                  </span>
                 </button>
               </div>
 
+              {/* 2 Playable Modes: Normal vs Chudling */}
+              <div className="grid grid-cols-2 gap-1.5 bg-black/45 p-1 rounded-xl border border-white/10">
+                <button
+                  type="button"
+                  onClick={() => selectFireMode('hand')}
+                  aria-pressed={fireMode === 'hand'}
+                  className={`min-h-[40px] py-2 px-3 rounded-lg text-xs sm:text-sm font-extrabold whitespace-nowrap transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
+                    fireMode === 'hand'
+                      ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-sm'
+                      : 'text-zinc-300 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  Normal
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => selectFireMode('thirdLeg')}
+                  aria-pressed={fireMode === 'thirdLeg'}
+                  className={`min-h-[40px] py-2 px-3 rounded-lg text-xs sm:text-sm font-extrabold whitespace-nowrap transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
+                    fireMode === 'thirdLeg'
+                      ? 'bg-white text-[#0E0E13] shadow-sm'
+                      : 'text-zinc-300 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  Chudling
+                </button>
+              </div>
+
+              {/* Primary CTA */}
               <button
                 type="button"
                 onClick={startGame}
-                className="w-full py-3.5 px-6 rounded-xl bg-[#EF4444] hover:bg-[#DC2626] border-2 border-red-700/40 active:scale-[0.98] text-white font-extrabold text-base shadow-[0_6px_18px_rgba(239,68,68,0.32)] transition-all whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1E1C21]"
+                className="w-full min-h-[46px] py-3 px-5 rounded-xl bg-[#EF4444] hover:bg-[#DC2626] active:scale-[0.98] text-white font-extrabold text-sm sm:text-base shadow-[0_6px_20px_rgba(239,68,68,0.38)] inline-flex items-center justify-center gap-2 transition-all whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
               >
+                <Play className="w-4 h-4 fill-current shrink-0" />
                 Start Game
               </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  const cached = loadCachedLeaderboard();
-                  if (cached.length > 0 && (!navigator.onLine || leaderboardEntries.length === 0)) {
-                    setLeaderboardEntries(cached);
-                    setLeaderboardLoading(false);
-                    setLeaderboardError(null);
-                  }
-                  setLeaderboardOpen(true);
-                }}
-                className="w-full py-2.5 px-4 rounded-xl bg-amber-100 hover:bg-amber-200 border-2 border-amber-300 text-[#1E1C21] font-extrabold text-xs inline-flex items-center justify-center gap-2 transition-colors shadow-sm"
-              >
-                <Trophy className="w-4 h-4 text-amber-600" />
-                Global Leaderboard
-              </button>
+              {/* Secondary Utility Row */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cached = loadCachedLeaderboard();
+                    if (cached.length > 0 && (!navigator.onLine || leaderboardEntries.length === 0)) {
+                      setLeaderboardEntries(cached);
+                      setLeaderboardLoading(false);
+                      setLeaderboardError(null);
+                    }
+                    setLeaderboardOpen(true);
+                  }}
+                  className="min-h-[42px] py-2 px-3 rounded-xl bg-amber-400/14 hover:bg-amber-400/22 border border-amber-400/35 text-amber-200 font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                >
+                  <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
+                  Leaderboard
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleShareScore(true)}
+                  className="min-h-[42px] py-2 px-3 rounded-xl bg-white/8 hover:bg-white/14 border border-white/14 text-zinc-100 font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                >
+                  <Share2 className="w-4 h-4 text-zinc-200 shrink-0" />
+                  {shareLabel === 'Share' ? 'Share Game' : shareLabel}
+                </button>
+              </div>
 
               <PWAInstallButton />
             </div>
@@ -1646,10 +1773,6 @@ export default function App() {
                 <span>{bestCombo}x Streak</span>
               </div>
 
-              {cloudStatus && (
-                <p className="mt-2 text-[11px] font-bold text-emerald-700">{cloudStatus}</p>
-              )}
-
               <button
                 type="button"
                 onClick={startGame}
@@ -1662,7 +1785,7 @@ export default function App() {
               <div className="mt-2.5 w-full grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={handleShareScore}
+                  onClick={() => handleShareScore(false)}
                   className="py-2.5 px-3 rounded-xl bg-[#F4F1F0] hover:bg-[#E7E3E1] border-2 border-zinc-300 text-[#1E1C21] font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors"
                 >
                   <Share2 className="w-3.5 h-3.5" />
@@ -1707,14 +1830,24 @@ export default function App() {
         user={user}
         playerName={playerName}
         onPlayerNameChange={setPlayerName}
-        bestScore={Math.max(score, bestScore)}
-        bestMode={fireMode}
-        bestZapped={zappedCount}
-        bestCombo={bestCombo}
+        bestScore={bestScore}
+        bestMode={
+          gameState === 'GAME_OVER' && score >= bestScore
+            ? fireMode
+            : loadBestMeta().fireMode
+        }
+        bestZapped={
+          gameState === 'GAME_OVER' && score >= bestScore
+            ? zappedCount
+            : loadBestMeta().zappedCount
+        }
+        bestCombo={
+          gameState === 'GAME_OVER' && score >= bestScore
+            ? bestCombo
+            : loadBestMeta().bestCombo
+        }
         onEntriesRefresh={() => setLeaderboardEntries(loadCachedLeaderboard())}
       />
-
-      <OfflineIndicator />
     </main>
   );
 }

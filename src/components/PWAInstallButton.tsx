@@ -15,9 +15,9 @@ export const PWAInstallButton: React.FC = () => {
       <button
         type="button"
         onClick={install}
-        className="w-full py-2.5 px-4 rounded-xl bg-[#1E1C21] hover:bg-[#2E2B33] border-2 border-black/15 text-white font-bold text-xs inline-flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98]"
+        className="w-full min-h-[42px] py-2 px-4 rounded-xl bg-white/8 hover:bg-white/14 border border-white/14 text-zinc-200 font-bold text-xs inline-flex items-center justify-center gap-2 transition-colors active:scale-[0.98] whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
       >
-        <Download className="w-4 h-4" />
+        <Download className="w-4 h-4 shrink-0" />
         Install App
       </button>
     );
@@ -29,9 +29,9 @@ export const PWAInstallButton: React.FC = () => {
         <button
           type="button"
           onClick={() => setShowIOSGuide(true)}
-          className="w-full py-2.5 px-4 rounded-xl bg-[#1E1C21] hover:bg-[#2E2B33] border-2 border-black/15 text-white font-bold text-xs inline-flex items-center justify-center gap-2 shadow-sm transition-all"
+          className="w-full min-h-[42px] py-2 px-4 rounded-xl bg-white/8 hover:bg-white/14 border border-white/14 text-zinc-200 font-bold text-xs inline-flex items-center justify-center gap-2 transition-colors active:scale-[0.98] whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
         >
-          <Download className="w-4 h-4" />
+          <Download className="w-4 h-4 shrink-0" />
           Install on iOS
         </button>
 

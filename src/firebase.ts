@@ -130,13 +130,31 @@ export function loadCachedLeaderboard(): LeaderboardRecord[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (item): item is LeaderboardRecord =>
-        Boolean(item) &&
-        typeof item.uid === 'string' &&
-        typeof item.playerName === 'string' &&
-        typeof item.score === 'number'
-    );
+    return parsed
+      .filter(
+        (item): item is LeaderboardRecord =>
+          Boolean(item) &&
+          typeof item.uid === 'string' &&
+          item.uid.length > 0 &&
+          typeof item.playerName === 'string' &&
+          typeof item.score === 'number' &&
+          Number.isFinite(item.score)
+      )
+      .map((item) => ({
+        uid: item.uid,
+        playerName: sanitizePlayerName(item.playerName),
+        score: Math.max(0, Math.floor(item.score)),
+        fireMode: item.fireMode === 'hand' ? 'hand' : 'thirdLeg',
+        zappedCount:
+          typeof item.zappedCount === 'number' && Number.isFinite(item.zappedCount)
+            ? Math.max(0, Math.floor(item.zappedCount))
+            : 0,
+        bestCombo:
+          typeof item.bestCombo === 'number' && Number.isFinite(item.bestCombo)
+            ? Math.max(0, Math.floor(item.bestCombo))
+            : 0,
+        isGuest: Boolean(item.isGuest),
+      }));
   } catch {
     return [];
   }
@@ -172,15 +190,28 @@ export function mergeLocalEntryIntoCache(entry: {
   const existing = loadCachedLeaderboard();
   const idx = existing.findIndex((row) => row.uid === entry.uid);
   const prev = idx >= 0 ? existing[idx] : null;
-  const merged: LeaderboardRecord = {
-    uid: entry.uid,
-    playerName: entry.playerName,
-    score: prev ? Math.max(prev.score, entry.score) : entry.score,
-    fireMode: entry.fireMode,
-    zappedCount: prev ? Math.max(prev.zappedCount, entry.zappedCount) : entry.zappedCount,
-    bestCombo: prev ? Math.max(prev.bestCombo, entry.bestCombo) : entry.bestCombo,
-    isGuest: entry.isGuest,
-  };
+  const isNewHigh = !prev || entry.score > prev.score;
+  const merged: LeaderboardRecord = isNewHigh
+    ? {
+        uid: entry.uid,
+        playerName: entry.playerName,
+        score: entry.score,
+        fireMode: entry.fireMode,
+        zappedCount: entry.zappedCount,
+        bestCombo: entry.bestCombo,
+        isGuest: entry.isGuest,
+      }
+    : {
+        uid: entry.uid,
+        playerName: entry.playerName,
+        score: prev.score,
+        fireMode: prev.fireMode,
+        zappedCount:
+          entry.score === prev.score && entry.zappedCount > 0 ? entry.zappedCount : prev.zappedCount,
+        bestCombo:
+          entry.score === prev.score && entry.bestCombo > 0 ? entry.bestCombo : prev.bestCombo,
+        isGuest: entry.isGuest,
+      };
   const next = [...existing.filter((row) => row.uid !== entry.uid), merged]
     .sort((a, b) => b.score - a.score)
     .slice(0, 20);
@@ -457,6 +488,7 @@ export async function submitLeaderboardScore(params: {
   let existingScore = -1;
   let existingZapped = 0;
   let existingCombo = 0;
+  let existingMode: FireMode = safeMode;
   try {
     const existingSnap = await getDoc(docRef);
     if (existingSnap.exists()) {
@@ -469,6 +501,9 @@ export async function submitLeaderboardScore(params: {
       }
       if (typeof existingData.bestCombo === 'number') {
         existingCombo = existingData.bestCombo;
+      }
+      if (existingData.fireMode === 'hand' || existingData.fireMode === 'thirdLeg') {
+        existingMode = existingData.fireMode;
       }
     }
   } catch (error) {
@@ -495,13 +530,22 @@ export async function submitLeaderboardScore(params: {
     return { saved: false, bestScore: existingScore, reason: 'already_synced' };
   }
 
+  const isHigherScore = existingScore < 0 || clampedScore > existingScore;
   const payload = {
     uid: ownerUid,
     playerName: safeName,
     score: clampedScore,
-    fireMode: safeMode,
-    zappedCount: Math.max(clampedZapped, existingZapped),
-    bestCombo: Math.max(clampedCombo, existingCombo),
+    fireMode: isHigherScore ? safeMode : existingMode,
+    zappedCount: isHigherScore
+      ? clampedZapped
+      : clampedZapped > 0
+        ? clampedZapped
+        : existingZapped,
+    bestCombo: isHigherScore
+      ? clampedCombo
+      : clampedCombo > 0
+        ? clampedCombo
+        : existingCombo,
     isGuest,
     updatedAt: serverTimestamp(),
   };

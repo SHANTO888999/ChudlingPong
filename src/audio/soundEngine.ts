@@ -1,7 +1,6 @@
 class SoundEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
-  private masterCompressor: DynamicsCompressorNode | null = null;
   private muted: boolean = false;
   private thirdLegBuffer: AudioBuffer | null = null;
   private thirdLegRawBytes: ArrayBuffer | null = null;
@@ -22,7 +21,6 @@ class SoundEngine {
   private fireHitLoading: boolean = false;
   private activeFireSource: AudioBufferSourceNode | null = null;
   private activeVoiceSource: AudioBufferSourceNode | null = null;
-  private activeVoiceKind: 'hit' | 'miss' | 'bite' | 'death' | null = null;
   private lastMissTs: number = 0;
   private missToggle: boolean = false;
 
@@ -74,7 +72,6 @@ class SoundEngine {
       compressor.connect(this.ctx.destination);
 
       this.masterGain = master;
-      this.masterCompressor = compressor;
     }
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
@@ -256,7 +253,6 @@ class SoundEngine {
     offsetSec: number,
     durationSec: number,
     volume: number,
-    kind: 'hit' | 'miss' | 'bite' | 'death',
     delaySec: number = 0
   ): void {
     const ctx = this.ensureContext();
@@ -284,12 +280,10 @@ class SoundEngine {
       source.onended = () => {
         if (this.activeVoiceSource === source) {
           this.activeVoiceSource = null;
-          this.activeVoiceKind = null;
         }
       };
 
       this.activeVoiceSource = source;
-      this.activeVoiceKind = kind;
       source.start(startAt, safeOffset, safeDuration);
     };
 
@@ -314,7 +308,6 @@ class SoundEngine {
         clip.offset,
         clip.duration,
         clip.volume,
-        'hit',
         0.14
       );
     } else {
@@ -324,7 +317,6 @@ class SoundEngine {
         clip.offset,
         clip.duration,
         clip.volume,
-        'hit',
         0.14
       );
     }
@@ -340,9 +332,9 @@ class SoundEngine {
     this.missToggle = !this.missToggle;
     const loader = (ctx: AudioContext) => this.loadThirdLegBuffer(ctx);
     if (this.missToggle) {
-      this.playBufferSegment(this.thirdLegBuffer, loader, 0.12, 0.72, 1.65, 'miss');
+      this.playBufferSegment(this.thirdLegBuffer, loader, 0.12, 0.72, 1.65);
     } else {
-      this.playBufferSegment(this.thirdLegBuffer, loader, 1.56, 0.54, 1.65, 'miss');
+      this.playBufferSegment(this.thirdLegBuffer, loader, 1.56, 0.54, 1.65);
     }
   }
 
@@ -354,8 +346,7 @@ class SoundEngine {
       (ctx) => this.loadThirdLegBuffer(ctx),
       3.05,
       1.35,
-      1.85,
-      'bite'
+      1.85
     );
   }
 
@@ -368,8 +359,7 @@ class SoundEngine {
       (ctx) => this.loadDeathSoundBuffer(ctx),
       clip.offset,
       clip.duration,
-      1.85,
-      'death'
+      1.85
     );
   }
 
@@ -382,7 +372,6 @@ class SoundEngine {
       }
       this.activeVoiceSource = null;
     }
-    this.activeVoiceKind = null;
   }
 
   private stopFireHitEffect(): void {

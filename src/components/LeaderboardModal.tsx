@@ -9,7 +9,6 @@ import {
   signOutUser,
   submitLeaderboardScore,
 } from '../firebase';
-import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import type { FireMode } from '../game/types';
 
 interface LeaderboardModalProps {
@@ -44,8 +43,6 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
   onEntriesRefresh,
 }) => {
   const [busy, setBusy] = useState(false);
-  const [statusMsg, setStatusMsg] = useState<string | null>(null);
-  const isOnline = useOnlineStatus();
 
   if (!open) return null;
 
@@ -53,16 +50,14 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
 
   const handleSignIn = async () => {
     setBusy(true);
-    setStatusMsg(null);
     try {
       const signedUser = await signInWithGoogle();
       const nextName = saveLocalPlayerName(
         playerName || signedUser.displayName || 'Player'
       );
       onPlayerNameChange(nextName);
-      setStatusMsg('Signed in with Google. Score auto-synced!');
-    } catch (err) {
-      setStatusMsg(err instanceof Error ? err.message : 'Google Sign-In failed.');
+    } catch {
+      // Ignore user-cancelled sign-in popup
     } finally {
       setBusy(false);
     }
@@ -70,12 +65,10 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
 
   const handleSignOut = async () => {
     setBusy(true);
-    setStatusMsg(null);
     try {
       await signOutUser();
-      setStatusMsg('Signed out (Guest mode active).');
     } catch {
-      setStatusMsg('Could not sign out.');
+      // Ignore sign-out errors
     } finally {
       setBusy(false);
     }
@@ -87,7 +80,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
     if (bestScore <= 0) return;
     setBusy(true);
     try {
-      const res = await submitLeaderboardScore({
+      await submitLeaderboardScore({
         playerName: cleanName,
         score: bestScore,
         fireMode: bestMode,
@@ -95,18 +88,17 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
         bestCombo,
         allowSameScoreRename: true,
       });
-      if (res.offlineQueued) {
-        onEntriesRefresh?.();
-        setStatusMsg(`Saved offline (${res.bestScore} pts). Will sync online.`);
-      } else if (res.saved) {
-        onEntriesRefresh?.();
-        setStatusMsg(`Name updated & synced (${res.bestScore} pts).`);
-      }
+      onEntriesRefresh?.();
     } catch {
-      setStatusMsg('Name saved locally.');
+      onEntriesRefresh?.();
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleClose = () => {
+    void handleNicknameAutoSave();
+    onClose();
   };
 
   return (
@@ -121,7 +113,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             aria-label="Close leaderboard"
             className="w-9 h-9 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 text-white flex items-center justify-center transition-colors"
           >
@@ -129,16 +121,10 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
           </button>
         </div>
 
-        {/* Auto-Synced Nickname & Optional Google Sign-In Bar */}
-        <div className="px-4 py-3 bg-white/6 border-b border-white/12 flex flex-col gap-2.5">
+        {/* Nickname & Optional Google Sign-In Bar */}
+        <div className="px-4 py-3 bg-white/6 border-b border-white/12 flex flex-col gap-2">
           <div className="flex items-center justify-between text-[11px] text-zinc-300 font-semibold">
-            <span>
-              {!isOnline
-                ? 'Offline · Cached Leaderboard'
-                : user
-                  ? 'Google Account Linked'
-                  : 'Guest Mode · Auto-Saved'}
-            </span>
+            <span>Nickname</span>
             <span className="text-emerald-400 font-bold tabular-nums">
               Best: {bestScore} pts
             </span>
@@ -181,10 +167,6 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
               </button>
             )}
           </div>
-
-          {statusMsg && (
-            <p className="text-[11px] text-amber-300 font-medium">{statusMsg}</p>
-          )}
         </div>
 
         {/* Entries List */}

@@ -3,6 +3,7 @@ import {
   BeamEffect,
   FireMode,
   FloatingText,
+  GameState,
   Mosquito,
   Particle,
   PoopSplat,
@@ -16,6 +17,7 @@ export interface RenderContext {
   width: number;
   height: number;
   time: number;
+  gameState: GameState;
   originX: number;
   originY: number;
   aimAngle: number; // radians, 0 = straight up
@@ -55,13 +57,13 @@ export function getBedOrigin(
   const { cx, cy, scale } = getBedLayout(width, height);
   if (fireMode === 'hand') {
     return {
-      x: cx - 12 * scale,
-      y: cy - 39 * scale,
+      x: cx - 16 * scale,
+      y: cy - 26 * scale,
     };
   }
   return {
     x: cx + 14 * scale,
-    y: cy - 11 * scale,
+    y: cy - 5 * scale,
   };
 }
 
@@ -89,6 +91,12 @@ export function renderGame(rc: RenderContext): void {
   drawNightAmbience(ctx, width, height, rc.time);
 
   ctx.translate(shakeX, shakeY);
+
+  if (rc.gameState === 'TITLE_MENU') {
+    drawStandingShowcase(rc);
+    ctx.restore();
+    return;
+  }
 
   // Subtle floor shadow under bed
   drawBedAndSleeper(rc);
@@ -735,6 +743,518 @@ function drawMosquito(ctx: CanvasRenderingContext2D, m: Mosquito, time: number):
   ctx.restore();
 }
 
+interface CharacterTheme {
+  topMain: string;
+  topAccent: string;
+  pants: string;
+  shoes: string;
+  skin: string;
+  auraRgb: string;
+  collar: 'pajama' | 'hoodie' | 'jacket' | 'vest' | 'suit';
+  normalShirt: string;
+  normalCollar: string;
+  normalPants: string;
+  normalShoes: string;
+}
+
+const CHARACTER_THEMES: Record<AvatarStyle, CharacterTheme> = {
+  sleepy: {
+    topMain: '#2563EB',
+    topAccent: '#93C5FD',
+    pants: '#1E293B',
+    shoes: '#38BDF8',
+    skin: '#FDE2C8',
+    auraRgb: '59, 130, 246',
+    collar: 'pajama',
+    normalShirt: '#3B82F6',
+    normalCollar: '#EFF6FF',
+    normalPants: '#1E293B',
+    normalShoes: '#F8FAFC',
+  },
+  emoji: {
+    topMain: '#F59E0B',
+    topAccent: '#FEF08A',
+    pants: '#27272A',
+    shoes: '#FACC15',
+    skin: '#FACC15',
+    auraRgb: '250, 204, 21',
+    collar: 'hoodie',
+    normalShirt: '#F59E0B',
+    normalCollar: '#FEF9C3',
+    normalPants: '#27272A',
+    normalShoes: '#FDE047',
+  },
+  cool: {
+    topMain: '#18181B',
+    topAccent: '#EF4444',
+    pants: '#0F172A',
+    shoes: '#EF4444',
+    skin: '#FDE2C8',
+    auraRgb: '239, 68, 68',
+    collar: 'jacket',
+    normalShirt: '#27272A',
+    normalCollar: '#EF4444',
+    normalPants: '#0F172A',
+    normalShoes: '#EF4444',
+  },
+  uncle: {
+    topMain: '#92400E',
+    topAccent: '#FDE68A',
+    pants: '#374151',
+    shoes: '#78350F',
+    skin: '#F3C9A6',
+    auraRgb: '245, 158, 11',
+    collar: 'vest',
+    normalShirt: '#EFE4D4',
+    normalCollar: '#92400E',
+    normalPants: '#334155',
+    normalShoes: '#78350F',
+  },
+  custom: {
+    topMain: '#7C3AED',
+    topAccent: '#F472B6',
+    pants: '#18181B',
+    shoes: '#EC4899',
+    skin: '#FDE2C8',
+    auraRgb: '236, 72, 153',
+    collar: 'suit',
+    normalShirt: '#6366F1',
+    normalCollar: '#FCE7F3',
+    normalPants: '#18181B',
+    normalShoes: '#E2E8F0',
+  },
+};
+
+function drawStandingShowcase(rc: RenderContext): void {
+  const { ctx, width, height, avatarStyle, fireMode, customAvatarImg, time } = rc;
+  const theme = CHARACTER_THEMES[avatarStyle];
+
+  // Clear upper stage right above the bottom-docked menu card
+  const stageTop = 54;
+  const stageBottom = Math.max(255, height - 332);
+  const stageH = Math.max(175, stageBottom - stageTop);
+  const cx = width * 0.5;
+  const groundY = stageTop + stageH * 0.87;
+  const scale = Math.max(0.92, Math.min(1.52, Math.min(width / 380, stageH / 215)));
+
+  // Decorative high-flying night mosquitoes in upper corners
+  const decoMosquitoes: Array<{ x: number; y: number; facing: 1 | -1; phase: number }> = [
+    { x: width * 0.16, y: stageTop + 34 + Math.sin(time * 2.8) * 8, facing: -1, phase: 0.4 },
+    { x: width * 0.82, y: stageTop + 62 + Math.cos(time * 2.4) * 9, facing: 1, phase: 2.1 },
+  ];
+  for (const dm of decoMosquitoes) {
+    drawMosquito(
+      ctx,
+      {
+        id: 0,
+        x: dm.x,
+        y: dm.y,
+        vx: 0,
+        vy: 0,
+        radius: 14,
+        wingPhase: time * 44 + dm.phase,
+        wobblePhase: time * 3.5 + dm.phase,
+        wobbleSpeed: 3.5,
+        kind: 'normal',
+        hp: 1,
+        maxHp: 1,
+        hitFlash: 0,
+        state: 'roaming',
+        stateTimer: 1,
+        diveTargetX: 0,
+        diveTargetY: 0,
+        facing: dm.facing,
+      },
+      time
+    );
+  }
+
+  ctx.save();
+  ctx.translate(cx, groundY);
+  ctx.scale(scale, scale);
+
+  // Soft vertical spotlight beam behind standing character
+  const spotGrad = ctx.createRadialGradient(0, -68, 12, 0, -62, 130);
+  spotGrad.addColorStop(0, `rgba(${theme.auraRgb}, 0.28)`);
+  spotGrad.addColorStop(0.55, `rgba(${theme.auraRgb}, 0.08)`);
+  spotGrad.addColorStop(1, `rgba(${theme.auraRgb}, 0)`);
+  ctx.fillStyle = spotGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, -65, 115, 115, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Glowing arcade pedestal ring beneath shoes
+  const padGrad = ctx.createRadialGradient(0, 2, 6, 0, 2, 74);
+  padGrad.addColorStop(0, `rgba(${theme.auraRgb}, 0.42)`);
+  padGrad.addColorStop(0.65, `rgba(${theme.auraRgb}, 0.14)`);
+  padGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = padGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, 3, 74, 16, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = `rgba(${theme.auraRgb}, 0.55)`;
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.ellipse(0, 2, 46, 9.5, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  const breathe = Math.sin(time * 2.5) * 1.4;
+  const sway = Math.sin(time * 1.6) * 1.1;
+
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // Standing Legs (from hip y=-46 down to ankles y=-7)
+  const isNormalMode = fireMode === 'hand';
+  const pantsColor = isNormalMode ? theme.normalPants : theme.pants;
+  const shoesColor = isNormalMode ? theme.normalShoes : theme.shoes;
+  const shirtColor = isNormalMode ? theme.normalShirt : theme.topMain;
+  const hipY = -46 + breathe * 0.25;
+  const shoulderY = -88 + breathe * 0.55;
+
+  if (isNormalMode) {
+    // Tailored filled trousers for Normal mode
+    ctx.fillStyle = pantsColor;
+    ctx.strokeStyle = '#09090B';
+    ctx.lineWidth = 2.2;
+    // Left trouser leg
+    ctx.beginPath();
+    ctx.moveTo(-14 + sway * 0.35, hipY + 1);
+    ctx.lineTo(-2 + sway * 0.35, hipY + 2);
+    ctx.lineTo(-6.5, -7);
+    ctx.lineTo(-18.5, -7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Right trouser leg
+    ctx.beginPath();
+    ctx.moveTo(2 + sway * 0.35, hipY + 2);
+    ctx.lineTo(14 + sway * 0.35, hipY + 1);
+    ctx.lineTo(18.5, -7);
+    ctx.lineTo(6.5, -7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = pantsColor;
+    ctx.lineWidth = 9.5;
+    ctx.beginPath();
+    ctx.moveTo(-8 + sway * 0.35, hipY);
+    ctx.lineTo(-13, -7);
+    ctx.moveTo(8 + sway * 0.35, hipY);
+    ctx.lineTo(13, -7);
+    ctx.stroke();
+
+    // Crisp outer pants outline
+    ctx.strokeStyle = '#09090B';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-12.5 + sway * 0.35, hipY);
+    ctx.lineTo(-17.5, -7);
+    ctx.moveTo(-3.5 + sway * 0.35, hipY);
+    ctx.lineTo(-8.5, -7);
+    ctx.moveTo(3.5 + sway * 0.35, hipY);
+    ctx.lineTo(8.5, -7);
+    ctx.moveTo(12.5 + sway * 0.35, hipY);
+    ctx.lineTo(17.5, -7);
+    ctx.stroke();
+  }
+
+  // Shoes firmly planted at y=0
+  for (const side of [-1, 1] as const) {
+    const sx = side * 14;
+    ctx.fillStyle = shoesColor;
+    ctx.strokeStyle = '#09090B';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(sx + side * 2, -2.5, 10.5, 5.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // White sole trim
+    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(sx - 6, 1);
+    ctx.lineTo(sx + side * 2 + 7, 1);
+    ctx.stroke();
+  }
+
+  // Torso / Outfit transforming per character
+  ctx.save();
+  ctx.translate(sway * 0.45, 0);
+
+  ctx.fillStyle = shirtColor;
+  ctx.strokeStyle = '#09090B';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(-16.5, shoulderY + 2);
+  ctx.quadraticCurveTo(0, shoulderY - 3, 16.5, shoulderY + 2);
+  ctx.lineTo(14, hipY + 3);
+  ctx.quadraticCurveTo(0, hipY + 6, -14, hipY + 3);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  if (isNormalMode) {
+    // Neat collared button-up shirt + chest pocket + waist belt with buckle
+    ctx.fillStyle = theme.normalCollar;
+    ctx.strokeStyle = '#09090B';
+    ctx.lineWidth = 1.6;
+    // Left collar flap
+    ctx.beginPath();
+    ctx.moveTo(-7, shoulderY + 1);
+    ctx.lineTo(-1, shoulderY + 11);
+    ctx.lineTo(-10, shoulderY + 9);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Right collar flap
+    ctx.beginPath();
+    ctx.moveTo(7, shoulderY + 1);
+    ctx.lineTo(1, shoulderY + 11);
+    ctx.lineTo(10, shoulderY + 9);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Center placket & buttons
+    ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(0, shoulderY + 10);
+    ctx.lineTo(0, hipY - 2);
+    ctx.stroke();
+    ctx.fillStyle = theme.normalCollar;
+    for (const by of [shoulderY + 16, shoulderY + 24, shoulderY + 32]) {
+      ctx.beginPath();
+      ctx.arc(0, by, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Small shirt pocket
+    ctx.strokeStyle = 'rgba(0,0,0,0.32)';
+    ctx.lineWidth = 1.4;
+    ctx.strokeRect(5, shoulderY + 15, 7, 8);
+
+    // Waist belt + golden buckle
+    ctx.fillStyle = '#18181B';
+    ctx.fillRect(-14, hipY - 2, 28, 5.5);
+    ctx.fillStyle = '#FACC15';
+    ctx.fillRect(-3, hipY - 2, 6, 5.5);
+  } else if (theme.collar === 'pajama') {
+    // Pajama center buttons + collar lapel
+    ctx.strokeStyle = theme.topAccent;
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(0, shoulderY + 4);
+    ctx.lineTo(0, hipY + 1);
+    ctx.stroke();
+    ctx.fillStyle = theme.topAccent;
+    for (const by of [shoulderY + 12, shoulderY + 22, shoulderY + 32]) {
+      ctx.beginPath();
+      ctx.arc(0, by, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (theme.collar === 'hoodie') {
+    // Sunny hoodie pocket & drawstrings
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath();
+    ctx.roundRect(-9, hipY - 12, 18, 11, 4);
+    ctx.fill();
+    ctx.strokeStyle = theme.topAccent;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-4, shoulderY + 4);
+    ctx.lineTo(-4, shoulderY + 16);
+    ctx.moveTo(4, shoulderY + 4);
+    ctx.lineTo(4, shoulderY + 16);
+    ctx.stroke();
+  } else if (theme.collar === 'jacket') {
+    // Arcade jacket crimson stripe & zipper
+    ctx.fillStyle = theme.topAccent;
+    ctx.fillRect(-13, shoulderY + 11, 26, 5);
+    ctx.strokeStyle = '#E4E4E7';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(0, shoulderY + 2);
+    ctx.lineTo(0, hipY + 2);
+    ctx.stroke();
+  } else if (theme.collar === 'vest') {
+    // Uncle cream undershirt V-neck inside vest
+    ctx.fillStyle = theme.topAccent;
+    ctx.beginPath();
+    ctx.moveTo(-7, shoulderY + 1);
+    ctx.lineTo(0, shoulderY + 16);
+    ctx.lineTo(7, shoulderY + 1);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    // Custom night-fighter chest emblem
+    ctx.strokeStyle = theme.topAccent;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(-9, shoulderY + 13);
+    ctx.lineTo(0, shoulderY + 21);
+    ctx.lineTo(9, shoulderY + 13);
+    ctx.stroke();
+  }
+
+  // Arms & Mode Silhouette (Normal Blaster vs Chudling Power Stance)
+  if (isNormalMode) {
+    // Left arm in tailored shirt sleeve with cuff
+    ctx.strokeStyle = shirtColor;
+    ctx.lineWidth = 7.5;
+    ctx.beginPath();
+    ctx.moveTo(-15.5, shoulderY + 5);
+    ctx.lineTo(-22.5, shoulderY + 22);
+    ctx.lineTo(-16.5, hipY + 1);
+    ctx.stroke();
+    ctx.fillStyle = theme.skin;
+    ctx.strokeStyle = '#09090B';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(-16, hipY + 3, 4.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Right arm in tailored shirt sleeve raised forward holding the fire-blaster
+    const gunX = 28;
+    const gunY = shoulderY + 4 + breathe * 0.3;
+    ctx.strokeStyle = shirtColor;
+    ctx.lineWidth = 7.5;
+    ctx.beginPath();
+    ctx.moveTo(15.5, shoulderY + 5);
+    ctx.lineTo(24, shoulderY + 15);
+    ctx.lineTo(gunX, gunY + 5);
+    ctx.stroke();
+
+    // Handheld red fire-blaster + live flickering flame
+    ctx.save();
+    ctx.translate(gunX + 2, gunY);
+    ctx.rotate(0.24);
+    ctx.fillStyle = '#EF4444';
+    ctx.strokeStyle = '#09090B';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(-5, -10, 10, 18, 3);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#52525B';
+    ctx.beginPath();
+    ctx.roundRect(-3, -16, 6, 7, 1.5);
+    ctx.fill();
+    ctx.stroke();
+
+    const flicker = Math.sin(time * 22) * 1.1;
+    ctx.fillStyle = 'rgba(249, 115, 22, 0.42)';
+    ctx.beginPath();
+    ctx.arc(0, -22, 9.5 + flicker * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#F97316';
+    ctx.beginPath();
+    ctx.ellipse(0, -22 - flicker * 0.3, 4.8, 7 + flicker * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FEF08A';
+    ctx.beginPath();
+    ctx.ellipse(0, -21 - flicker * 0.2, 2.3, 4 + flicker * 0.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = theme.skin;
+    ctx.strokeStyle = '#09090B';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(gunX + 1, gunY + 4, 4.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  } else {
+    // Chudling Mode standing silhouette
+    const rubWave = Math.sin(rc.rubPhase * 0.55);
+    const tipX = 18;
+    const tipY = hipY - 12;
+
+    // Left arm confident on hip
+    ctx.strokeStyle = theme.topMain;
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(-15, shoulderY + 5);
+    ctx.lineTo(-23, shoulderY + 21);
+    ctx.lineTo(-15, hipY + 1);
+    ctx.stroke();
+    ctx.fillStyle = theme.skin;
+    ctx.strokeStyle = '#09090B';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(-15, hipY + 2, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Signature comic 3rd leg angled forward-upward
+    ctx.strokeStyle = '#18161A';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(4, hipY + 1);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+
+    // Glowing pure-white ready droplet at tip
+    const pulse = Math.sin(time * 8) * 0.7;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.beginPath();
+    ctx.arc(tipX + 2, tipY - 3, 7 + pulse, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.ellipse(tipX + 2, tipY - 4, 3.6, 5.2 + pulse * 0.4, 0.4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Front arm reaching down near hip
+    const handX = 11 + rubWave * 2.4;
+    const handY = hipY - 5 + rubWave * 1.5;
+    ctx.strokeStyle = theme.topMain;
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(15, shoulderY + 5);
+    ctx.lineTo(22, shoulderY + 22);
+    ctx.lineTo(handX, handY);
+    ctx.stroke();
+    ctx.fillStyle = theme.skin;
+    ctx.strokeStyle = '#09090B';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(handX, handY, 4.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Neck connecting torso to upright head
+  const headY = shoulderY - 22;
+  ctx.fillStyle = theme.skin;
+  ctx.strokeStyle = '#09090B';
+  ctx.lineWidth = 2;
+  ctx.fillRect(-5, shoulderY - 9, 10, 12);
+  ctx.strokeRect(-5, shoulderY - 9, 10, 12);
+
+  // Upright transforming character face!
+  drawAvatarHead(ctx, sway * 0.25, headY, 22, avatarStyle, 'idle', customAvatarImg, time, 0, 0);
+
+  // Subtle floating Zzz only for Sleepy character
+  if (avatarStyle === 'sleepy') {
+    const zFloat = (time * 0.75) % 1;
+    ctx.save();
+    ctx.globalAlpha = Math.sin(zFloat * Math.PI) * 0.75;
+    ctx.fillStyle = '#E2E8F0';
+    ctx.font = '800 15px "Bricolage Grotesque", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Z', 26 + Math.sin(time * 3) * 3, headY - 16 - zFloat * 24);
+    ctx.restore();
+  }
+
+  ctx.restore();
+  ctx.restore();
+}
+
 function drawBedAndSleeper(rc: RenderContext): void {
   const { ctx, width, height, avatarStyle, sleeperMood, customAvatarImg, time } = rc;
 
@@ -814,53 +1334,137 @@ function drawBedAndSleeper(rc: RenderContext): void {
   ctx.fillRect(50, 48, 11, 24);   // front-right
   ctx.fillRect(120, 18, 10, 24);  // far-right
 
-  // Crisp light pillow centered near the head of the mattress
+  // Crisp light pillow resting squarely on the mattress head area
   ctx.fillStyle = '#FFFFFF';
   ctx.strokeStyle = '#8B93A6';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.ellipse(-72, -10, 27, 16, -0.35, 0, Math.PI * 2);
+  ctx.ellipse(-74, -2, 26, 16, -0.36, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
-  // Stick-figure body centered right in the middle of the bed
+  // Stick-figure body centered squarely along the mattress centerline
   const breathe = Math.sin(time * 2.4) * 1.1;
-  const shoulderX = -36;
-  const shoulderY = -1 + breathe * 0.35;
+  const shoulderX = -38;
+  const shoulderY = 3 + breathe * 0.35;
   const hipX = 10;
-  const hipY = 7 + breathe * 0.2;
+  const hipY = 13 + breathe * 0.2;
 
   if (rc.fireMode === 'hand') {
-    // Hand Fire mode: normal 2 legs (no 3rd leg), arms hold the fire-blaster upright
+    const theme = CHARACTER_THEMES[avatarStyle];
+    const neckY = 0.5 + breathe * 0.45;
+
+    // Neck connecting head to collared shirt
     ctx.strokeStyle = '#18161A';
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 7.5;
     ctx.beginPath();
-    // Neck & spine
-    ctx.moveTo(-48, -5 + breathe * 0.45);
+    ctx.moveTo(-53, neckY);
     ctx.lineTo(shoulderX, shoulderY);
-    ctx.lineTo(hipX, hipY);
-    // Left/upper main leg
-    ctx.moveTo(hipX, hipY);
-    ctx.lineTo(52, 8);
-    ctx.lineTo(90, 12);
-    ctx.lineTo(95, 7);
-    // Right/lower main leg
-    ctx.moveTo(hipX, hipY);
-    ctx.lineTo(48, 17);
-    ctx.lineTo(82, 24);
-    ctx.lineTo(87, 19);
-    // Both arms reaching up to hold the handheld fire-blaster
-    ctx.moveTo(shoulderX, shoulderY);
-    ctx.lineTo(-22, -10);
-    ctx.lineTo(-15, -16);
-    ctx.moveTo(shoulderX, shoulderY);
-    ctx.lineTo(-20, 5);
-    ctx.lineTo(-10, -14);
     ctx.stroke();
+    ctx.strokeStyle = theme.skin;
+    ctx.lineWidth = 4.6;
+    ctx.beginPath();
+    ctx.moveTo(-53, neckY);
+    ctx.lineTo(shoulderX, shoulderY);
+    ctx.stroke();
+
+    // Back arm (shirt sleeve + skin hand behind torso)
+    ctx.strokeStyle = '#18161A';
+    ctx.lineWidth = 8.8;
+    ctx.beginPath();
+    ctx.moveTo(shoulderX, shoulderY - 2);
+    ctx.lineTo(-27, -4);
+    ctx.lineTo(-17, -4);
+    ctx.stroke();
+    ctx.strokeStyle = theme.normalShirt;
+    ctx.lineWidth = 5.6;
+    ctx.beginPath();
+    ctx.moveTo(shoulderX, shoulderY - 2);
+    ctx.lineTo(-27, -4);
+    ctx.lineTo(-18, -4);
+    ctx.stroke();
+
+    // Tailored Pants (two full trouser legs with outlines + polished shoes)
+    const drawPantLeg = (hx: number, hy: number, kx: number, ky: number, ax: number, ay: number) => {
+      ctx.strokeStyle = '#18161A';
+      ctx.lineWidth = 11.5;
+      ctx.beginPath();
+      ctx.moveTo(hx, hy);
+      ctx.lineTo(kx, ky);
+      ctx.lineTo(ax, ay);
+      ctx.stroke();
+      ctx.strokeStyle = theme.normalPants;
+      ctx.lineWidth = 8.2;
+      ctx.beginPath();
+      ctx.moveTo(hx, hy);
+      ctx.lineTo(kx, ky);
+      ctx.lineTo(ax, ay);
+      ctx.stroke();
+      // Shoe
+      ctx.fillStyle = theme.normalShoes;
+      ctx.strokeStyle = '#18161A';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.ellipse(ax + 4, ay - 3.5, 6.2, 4.2, -0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    };
+    drawPantLeg(hipX - 1, hipY - 2, 52, 13, 91, 17);
+    drawPantLeg(hipX - 3, hipY + 3, 48, 22, 83, 28);
+
+    // Neat Collared Shirt Torso
+    ctx.fillStyle = theme.normalShirt;
+    ctx.strokeStyle = '#18161A';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(shoulderX - 3, shoulderY - 9);
+    ctx.lineTo(hipX - 2, hipY - 9);
+    ctx.quadraticCurveTo(hipX + 5, hipY + 1, hipX - 2, hipY + 9);
+    ctx.lineTo(shoulderX - 1, shoulderY + 11);
+    ctx.quadraticCurveTo(shoulderX - 8, shoulderY + 1, shoulderX - 3, shoulderY - 9);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Shirt collar flaps + buttons + waist belt
+    ctx.fillStyle = theme.normalCollar;
+    ctx.strokeStyle = '#18161A';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(shoulderX - 5, shoulderY - 4);
+    ctx.lineTo(shoulderX + 6, shoulderY + 1);
+    ctx.lineTo(shoulderX - 3, shoulderY + 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = theme.normalCollar;
+    for (let i = 0; i < 3; i++) {
+      const t = 0.28 + i * 0.22;
+      ctx.beginPath();
+      ctx.arc(
+        shoulderX + (hipX - shoulderX) * t,
+        shoulderY + (hipY - shoulderY) * t,
+        1.5,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+    }
+
+    // Waist belt + buckle
+    ctx.strokeStyle = '#18161A';
+    ctx.lineWidth = 4.2;
+    ctx.beginPath();
+    ctx.moveTo(hipX - 3, hipY - 8);
+    ctx.lineTo(hipX - 3, hipY + 8);
+    ctx.stroke();
+    ctx.fillStyle = '#FACC15';
+    ctx.fillRect(hipX - 4.5, hipY - 2.5, 3.2, 5);
 
     // Handheld mini fire-blaster / lighter-torch tilting with aimAngle
     ctx.save();
-    ctx.translate(-12, -18);
+    ctx.translate(-16, -6);
     ctx.rotate(rc.aimAngle * 0.85);
     ctx.fillStyle = '#EF4444';
     ctx.strokeStyle = '#18161A';
@@ -888,50 +1492,79 @@ function drawBedAndSleeper(rc: RenderContext): void {
     ctx.ellipse(0, -20.5 - flicker * 0.2, 2.2, 3.6 + flicker * 0.3, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
+
+    // Front arm (shirt sleeve + cuff + skin hands gripping the blaster)
+    ctx.strokeStyle = '#18161A';
+    ctx.lineWidth = 9.2;
+    ctx.beginPath();
+    ctx.moveTo(shoulderX + 2, shoulderY + 6);
+    ctx.lineTo(-24, 12);
+    ctx.lineTo(-15, -2);
+    ctx.stroke();
+    ctx.strokeStyle = theme.normalShirt;
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(shoulderX + 2, shoulderY + 6);
+    ctx.lineTo(-24, 12);
+    ctx.lineTo(-16, 0);
+    ctx.stroke();
+
+    ctx.fillStyle = theme.skin;
+    ctx.strokeStyle = '#18161A';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(-16.5, -3.5, 3.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(-15, -1.5, 3.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
   } else {
-    // 3rd Leg mode: rubs the cut 3rd leg at speed matching fire rate and blasts pure-white sticky liquid
+    // Chudling mode: rubs the cut 3rd leg at speed matching fire rate and blasts pure-white sticky liquid
     const rubWave = Math.sin(rc.rubPhase);
     const rubT = 0.24 + 0.62 * (0.5 + 0.5 * rubWave);
-    const legTipX = 14 + rubWave * 0.6;
-    const legTipY = -11;
-    const handX = hipX + (legTipX - hipX) * rubT + Math.cos(rc.rubPhase) * 0.8;
+    const legTipX = 14 + rubWave * 0.5;
+    const legTipY = -5;
+    const handX = hipX + (legTipX - hipX) * rubT + Math.cos(rc.rubPhase) * 0.6;
     const handY = hipY + (legTipY - hipY) * rubT;
-    const elbowX = -15 + rubT * 2.2;
-    const elbowY = 13.5 - rubT * 3;
+    const elbowX = -15 + rubT * 2.4;
+    const elbowY = 17 - rubT * 2.5;
 
     ctx.strokeStyle = '#18161A';
     ctx.lineWidth = 4;
     ctx.beginPath();
     // Neck & spine centered down the middle of the mattress
-    ctx.moveTo(-48, -5 + breathe * 0.45);
+    ctx.moveTo(-50, 0.5 + breathe * 0.45);
     ctx.lineTo(shoulderX, shoulderY);
     ctx.lineTo(hipX, hipY);
     // Left/upper main leg along the middle-upper mattress
     ctx.moveTo(hipX, hipY);
-    ctx.lineTo(52, 8);
-    ctx.lineTo(90, 12);
-    ctx.lineTo(95, 7);
+    ctx.lineTo(52, 13);
+    ctx.lineTo(92, 17);
+    ctx.lineTo(97, 11);
     // Right/lower main leg along the middle-lower mattress
     ctx.moveTo(hipX, hipY);
-    ctx.lineTo(48, 17);
-    ctx.lineTo(82, 24);
-    ctx.lineTo(87, 19);
-    // Small middle third residual/cut leg (shorter stump)
+    ctx.lineTo(48, 22);
+    ctx.lineTo(84, 29);
+    ctx.lineTo(89, 23);
+    // Small middle third residual/cut leg
     ctx.moveTo(hipX, hipY);
     ctx.lineTo(legTipX, legTipY);
-    // Left arm resting spread out onto the upper side of the bed
+    // Back arm resting comfortably on the mattress
     ctx.moveTo(shoulderX, shoulderY);
-    ctx.lineTo(-24, -15);
-    ctx.lineTo(-10, -11);
-    // Right arm holding and rubbing up and down along the cut middle leg
+    ctx.lineTo(-27, -8);
+    ctx.lineTo(-14, -6);
+    // Front arm bent naturally along the bed to hold & rub the 3rd leg
     ctx.moveTo(shoulderX, shoulderY);
     ctx.lineTo(elbowX, elbowY);
     ctx.lineTo(handX, handY);
     ctx.stroke();
 
-    // Small hand grip sliding up and down the cut leg
+    // Resting back hand & active front hand grip
     ctx.fillStyle = '#18161A';
     ctx.beginPath();
+    ctx.arc(-14, -6, 3.0, 0, Math.PI * 2);
     ctx.arc(handX, handY, 3.4, 0, Math.PI * 2);
     ctx.fill();
 
@@ -954,15 +1587,16 @@ function drawBedAndSleeper(rc: RenderContext): void {
     }
   }
 
-  // Head / Avatar Face resting cleanly on the centered pillow
-  const headX = -64;
-  const headY = -10 + breathe * 0.5;
-  const headR = 23;
+  // Head / Avatar Face resting squarely in the center of the pillow, aligned with the neck & spine
+  const headX = -69;
+  const headY = -5 + breathe * 0.45;
+  const headR = 20;
+  const headAngle = -1.25;
 
   ctx.save();
   ctx.translate(headX, headY);
-  ctx.rotate(-0.08);
-  drawAvatarHead(ctx, 0, 0, headR, avatarStyle, sleeperMood, customAvatarImg, time);
+  ctx.rotate(headAngle);
+  drawAvatarHead(ctx, 0, 0, headR, avatarStyle, sleeperMood, customAvatarImg, time, headAngle, rc.aimAngle);
   ctx.restore();
 
   ctx.restore();
@@ -976,7 +1610,9 @@ function drawAvatarHead(
   style: AvatarStyle,
   mood: SleeperMood,
   customImg: HTMLImageElement | null,
-  time: number
+  time: number,
+  headAngle: number,
+  aimAngle: number
 ): void {
   ctx.save();
   ctx.translate(x, y);
@@ -1136,19 +1772,26 @@ function drawAvatarHead(
     ctx.arc(9, -4, 2, 0, Math.PI * 2);
     ctx.fill();
   } else if (mood === 'aiming') {
-    // Focused squinting eyes looking up
+    // Focused squinting eyes tracking the aim direction in world space
+    const worldDirX = Math.sin(aimAngle);
+    const worldDirY = -Math.cos(aimAngle);
+    const cosA = Math.cos(-headAngle);
+    const sinA = Math.sin(-headAngle);
+    const pupilDx = (worldDirX * cosA - worldDirY * sinA) * 2.1;
+    const pupilDy = (worldDirX * sinA + worldDirY * cosA) * 2.1;
+
     ctx.fillStyle = '#FFFFFF';
     ctx.strokeStyle = '#1E1C21';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.ellipse(-9, -4, 5, 3.5, 0, 0, Math.PI * 2);
-    ctx.ellipse(9, -4, 5, 3.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(-9, -4, 5, 3.6, 0, 0, Math.PI * 2);
+    ctx.ellipse(9, -4, 5, 3.6, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = '#1E1C21';
     ctx.beginPath();
-    ctx.arc(-9, -5.5, 2, 0, Math.PI * 2);
-    ctx.arc(9, -5.5, 2, 0, Math.PI * 2);
+    ctx.arc(-9 + pupilDx, -4 + pupilDy, 2, 0, Math.PI * 2);
+    ctx.arc(9 + pupilDx, -4 + pupilDy, 2, 0, Math.PI * 2);
     ctx.fill();
   } else if (mood === 'happy') {
     // Happy curved closed eyes
