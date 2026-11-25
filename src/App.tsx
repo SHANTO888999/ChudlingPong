@@ -14,6 +14,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { soundEngine } from './audio/soundEngine';
+import { FaceCropModal } from './components/FaceCropModal';
 import { LeaderboardModal } from './components/LeaderboardModal';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import {
@@ -43,6 +44,7 @@ import {
   SleeperMood,
   ZzzBubble,
 } from './game/types';
+import { loadImageForCrop } from './utils/imageLoader';
 import { shareChudlingPong } from './utils/shareCard';
 
 const BEST_SCORE_KEY = 'sleepy_zapper_best_v1';
@@ -51,6 +53,7 @@ const BEST_COMBO_KEY = 'sleepy_zapper_best_combo_v1';
 const BEST_MODE_KEY = 'sleepy_zapper_best_mode_v1';
 const BEST_OWNER_KEY = 'sleepy_zapper_best_owner_v1';
 const AVATAR_STYLE_KEY = 'sleepy_zapper_avatar_v1';
+const CUSTOM_FACE_STORAGE_KEY = 'sleepy_zapper_custom_face_v1';
 const FIRE_MODE_KEY = 'sleepy_zapper_fire_mode_v1';
 
 const AVATAR_OPTIONS: { id: AvatarStyle; emoji: string; label: string }[] = [
@@ -100,11 +103,24 @@ function saveBestRecord(
   localStorage.setItem(BEST_OWNER_KEY, ownerUid);
 }
 
+function loadSavedCustomFace(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const saved = localStorage.getItem(CUSTOM_FACE_STORAGE_KEY);
+    return saved && saved.startsWith('data:image/') ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
 function loadAvatarStyle(): AvatarStyle {
   if (typeof window === 'undefined') return 'sleepy';
   const saved = localStorage.getItem(AVATAR_STYLE_KEY) as AvatarStyle | null;
   if (saved === 'sleepy' || saved === 'emoji' || saved === 'cool' || saved === 'uncle') {
     return saved;
+  }
+  if (saved === 'custom' && loadSavedCustomFace()) {
+    return 'custom';
   }
   return 'sleepy';
 }
@@ -163,7 +179,11 @@ export default function App() {
   const [tripleShotSeconds, setTripleShotSeconds] = useState<number>(0);
   const [muted, setMuted] = useState<boolean>(() => soundEngine.isMuted());
   const [avatarStyle, setAvatarStyle] = useState<AvatarStyle>(() => loadAvatarStyle());
-  const [hasCustomImage, setHasCustomImage] = useState<boolean>(false);
+  const [customFaceUrl, setCustomFaceUrl] = useState<string | null>(() => loadSavedCustomFace());
+  const [hasCustomImage, setHasCustomImage] = useState<boolean>(() => Boolean(loadSavedCustomFace()));
+  const [cropSourceUrl, setCropSourceUrl] = useState<string | null>(null);
+  const [cropError, setCropError] = useState<string | null>(null);
+  const [cropModalOpen, setCropModalOpen] = useState<boolean>(false);
 
   // Firebase Auth & Leaderboard state
   const [user, setUser] = useState<User | null>(null);
@@ -237,7 +257,7 @@ export default function App() {
   playerNameRef.current = playerName;
 
   const customAvatarImgRef = useRef<HTMLImageElement | null>(null);
-  const customAvatarUrlRef = useRef<string | null>(null);
+  const uploadSeqRef = useRef<number>(0);
 
   const prefersReducedMotion =
     typeof window !== 'undefined' &&
@@ -1279,7 +1299,7 @@ export default function App() {
   // Keyboard support (Left/Right or A/D to aim, Space/Enter to fire, Escape/P to pause)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (leaderboardOpen) return;
+      if (leaderboardOpen || cropModalOpen) return;
       if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
         simRef.current.keysPressed.left = true;
       } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
@@ -1313,16 +1333,20 @@ export default function App() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [fireBeam, leaderboardOpen]);
+  }, [fireBeam, leaderboardOpen, cropModalOpen]);
 
-  // Cleanup custom object URL on unmount
+  // Restore saved custom cropped face image on mount / change
   useEffect(() => {
-    return () => {
-      if (customAvatarUrlRef.current) {
-        URL.revokeObjectURL(customAvatarUrlRef.current);
-      }
+    if (!customFaceUrl) {
+      customAvatarImgRef.current = null;
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      customAvatarImgRef.current = img;
     };
-  }, []);
+    img.src = customFaceUrl;
+  }, [customFaceUrl]);
 
   const updateAimFromPointer = (clientX: number, clientY: number, isInitialPress: boolean) => {
     const canvas = canvasRef.current;
@@ -1423,8 +1447,10 @@ export default function App() {
 
   const selectAvatar = (style: AvatarStyle) => {
     setAvatarStyle(style);
-    if (style !== 'custom') {
+    try {
       localStorage.setItem(AVATAR_STYLE_KEY, style);
+    } catch {
+      // Ignore storage quota errors
     }
   };
 
@@ -1436,22 +1462,50 @@ export default function App() {
     }
   };
 
-  const handleCustomPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const closeCropModal = () => {
+    uploadSeqRef.current += 1;
+    setCropModalOpen(false);
+    setCropSourceUrl(null);
+    setCropError(null);
+  };
+
+  const handleCustomPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    if (customAvatarUrlRef.current) {
-      URL.revokeObjectURL(customAvatarUrlRef.current);
+
+    const seq = ++uploadSeqRef.current;
+    setCropError(null);
+    setCropSourceUrl(null);
+    setCropModalOpen(true);
+
+    try {
+      const normalizedDataUrl = await loadImageForCrop(file);
+      if (uploadSeqRef.current !== seq) return;
+      setCropSourceUrl(normalizedDataUrl);
+    } catch {
+      if (uploadSeqRef.current !== seq) return;
+      setCropError(
+        'Could not open this image. If it is an iPhone HEIC file, try saving/selecting as JPG or PNG.'
+      );
     }
-    const url = URL.createObjectURL(file);
-    customAvatarUrlRef.current = url;
+  };
+
+  const handleCropConfirm = (croppedDataUrl: string) => {
     const img = new Image();
     img.onload = () => {
       customAvatarImgRef.current = img;
+      setCustomFaceUrl(croppedDataUrl);
       setHasCustomImage(true);
-      setAvatarStyle('custom');
+      selectAvatar('custom');
+      try {
+        localStorage.setItem(CUSTOM_FACE_STORAGE_KEY, croppedDataUrl);
+      } catch {
+        // Ignore storage quota errors
+      }
+      closeCropModal();
     };
-    img.src = url;
-    e.target.value = '';
+    img.src = croppedDataUrl;
   };
 
   const handleShareScore = async (inviteOnly: boolean = false) => {
@@ -1596,7 +1650,7 @@ export default function App() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,.heic,.heif"
                 onChange={handleCustomPhotoUpload}
                 className="hidden"
               />
@@ -1625,8 +1679,18 @@ export default function App() {
                 })}
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  aria-label="Upload custom face photo"
+                  onClick={() => {
+                    if (hasCustomImage && avatarStyle !== 'custom') {
+                      selectAvatar('custom');
+                    } else {
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  aria-label={
+                    hasCustomImage && avatarStyle === 'custom'
+                      ? 'Change custom face photo'
+                      : 'Upload custom face photo'
+                  }
                   aria-pressed={avatarStyle === 'custom' && hasCustomImage}
                   className={`min-h-[48px] py-1.5 px-1 rounded-xl border transition-all flex flex-col items-center justify-center gap-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
                     avatarStyle === 'custom' && hasCustomImage
@@ -1634,9 +1698,17 @@ export default function App() {
                       : 'bg-white/5 border-white/10 text-zinc-400 hover:bg-white/10 hover:text-zinc-200'
                   }`}
                 >
-                  <Upload className="w-4 h-4 shrink-0" />
+                  {customFaceUrl ? (
+                    <img
+                      src={customFaceUrl}
+                      alt="Custom face"
+                      className="w-5 h-5 rounded-full object-cover border border-white/50 shrink-0"
+                    />
+                  ) : (
+                    <Upload className="w-4 h-4 shrink-0" />
+                  )}
                   <span className="text-[10px] font-bold leading-none whitespace-nowrap">
-                    Photo
+                    {hasCustomImage && avatarStyle === 'custom' ? 'Change' : 'Photo'}
                   </span>
                 </button>
               </div>
@@ -1847,6 +1919,14 @@ export default function App() {
             : loadBestMeta().bestCombo
         }
         onEntriesRefresh={() => setLeaderboardEntries(loadCachedLeaderboard())}
+      />
+
+      <FaceCropModal
+        open={cropModalOpen}
+        imageSrc={cropSourceUrl}
+        errorMessage={cropError}
+        onCancel={closeCropModal}
+        onConfirm={handleCropConfirm}
       />
     </main>
   );

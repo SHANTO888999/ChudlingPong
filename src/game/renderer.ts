@@ -744,13 +744,8 @@ function drawMosquito(ctx: CanvasRenderingContext2D, m: Mosquito, time: number):
 }
 
 interface CharacterTheme {
-  topMain: string;
-  topAccent: string;
-  pants: string;
-  shoes: string;
   skin: string;
   auraRgb: string;
-  collar: 'pajama' | 'hoodie' | 'jacket' | 'vest' | 'suit';
   normalShirt: string;
   normalCollar: string;
   normalPants: string;
@@ -759,65 +754,40 @@ interface CharacterTheme {
 
 const CHARACTER_THEMES: Record<AvatarStyle, CharacterTheme> = {
   sleepy: {
-    topMain: '#2563EB',
-    topAccent: '#93C5FD',
-    pants: '#1E293B',
-    shoes: '#38BDF8',
     skin: '#FDE2C8',
     auraRgb: '59, 130, 246',
-    collar: 'pajama',
     normalShirt: '#3B82F6',
     normalCollar: '#EFF6FF',
     normalPants: '#1E293B',
     normalShoes: '#F8FAFC',
   },
   emoji: {
-    topMain: '#F59E0B',
-    topAccent: '#FEF08A',
-    pants: '#27272A',
-    shoes: '#FACC15',
     skin: '#FACC15',
     auraRgb: '250, 204, 21',
-    collar: 'hoodie',
     normalShirt: '#F59E0B',
     normalCollar: '#FEF9C3',
     normalPants: '#27272A',
     normalShoes: '#FDE047',
   },
   cool: {
-    topMain: '#18181B',
-    topAccent: '#EF4444',
-    pants: '#0F172A',
-    shoes: '#EF4444',
     skin: '#FDE2C8',
     auraRgb: '239, 68, 68',
-    collar: 'jacket',
     normalShirt: '#27272A',
     normalCollar: '#EF4444',
     normalPants: '#0F172A',
     normalShoes: '#EF4444',
   },
   uncle: {
-    topMain: '#92400E',
-    topAccent: '#FDE68A',
-    pants: '#374151',
-    shoes: '#78350F',
     skin: '#F3C9A6',
     auraRgb: '245, 158, 11',
-    collar: 'vest',
     normalShirt: '#EFE4D4',
     normalCollar: '#92400E',
     normalPants: '#334155',
     normalShoes: '#78350F',
   },
   custom: {
-    topMain: '#7C3AED',
-    topAccent: '#F472B6',
-    pants: '#18181B',
-    shoes: '#EC4899',
     skin: '#FDE2C8',
     auraRgb: '236, 72, 153',
-    collar: 'suit',
     normalShirt: '#6366F1',
     normalCollar: '#FCE7F3',
     normalPants: '#18181B',
@@ -874,13 +844,13 @@ function drawStandingShowcase(rc: RenderContext): void {
   ctx.scale(scale, scale);
 
   // Soft vertical spotlight beam behind standing character
-  const spotGrad = ctx.createRadialGradient(0, -68, 12, 0, -62, 130);
-  spotGrad.addColorStop(0, `rgba(${theme.auraRgb}, 0.28)`);
-  spotGrad.addColorStop(0.55, `rgba(${theme.auraRgb}, 0.08)`);
+  const spotGrad = ctx.createRadialGradient(0, -68, 12, 0, -62, 134);
+  spotGrad.addColorStop(0, `rgba(${theme.auraRgb}, 0.44)`);
+  spotGrad.addColorStop(0.55, `rgba(${theme.auraRgb}, 0.14)`);
   spotGrad.addColorStop(1, `rgba(${theme.auraRgb}, 0)`);
   ctx.fillStyle = spotGrad;
   ctx.beginPath();
-  ctx.ellipse(0, -65, 115, 115, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, -65, 118, 118, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // Glowing arcade pedestal ring beneath shoes
@@ -905,17 +875,15 @@ function drawStandingShowcase(rc: RenderContext): void {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  // Standing Legs (from hip y=-46 down to ankles y=-7)
+  // Standing Body: Tailored shirt & pants in Normal mode, classic funny stick-figure in Chudling mode
   const isNormalMode = fireMode === 'hand';
-  const pantsColor = isNormalMode ? theme.normalPants : theme.pants;
-  const shoesColor = isNormalMode ? theme.normalShoes : theme.shoes;
-  const shirtColor = isNormalMode ? theme.normalShirt : theme.topMain;
   const hipY = -46 + breathe * 0.25;
   const shoulderY = -88 + breathe * 0.55;
+  const headY = shoulderY - 22;
 
   if (isNormalMode) {
     // Tailored filled trousers for Normal mode
-    ctx.fillStyle = pantsColor;
+    ctx.fillStyle = theme.normalPants;
     ctx.strokeStyle = '#09090B';
     ctx.lineWidth = 2.2;
     // Left trouser leg
@@ -936,72 +904,45 @@ function drawStandingShowcase(rc: RenderContext): void {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-  } else {
-    ctx.strokeStyle = pantsColor;
-    ctx.lineWidth = 9.5;
-    ctx.beginPath();
-    ctx.moveTo(-8 + sway * 0.35, hipY);
-    ctx.lineTo(-13, -7);
-    ctx.moveTo(8 + sway * 0.35, hipY);
-    ctx.lineTo(13, -7);
-    ctx.stroke();
 
-    // Crisp outer pants outline
-    ctx.strokeStyle = '#09090B';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(-12.5 + sway * 0.35, hipY);
-    ctx.lineTo(-17.5, -7);
-    ctx.moveTo(-3.5 + sway * 0.35, hipY);
-    ctx.lineTo(-8.5, -7);
-    ctx.moveTo(3.5 + sway * 0.35, hipY);
-    ctx.lineTo(8.5, -7);
-    ctx.moveTo(12.5 + sway * 0.35, hipY);
-    ctx.lineTo(17.5, -7);
-    ctx.stroke();
-  }
+    // Shoes firmly planted at y=0
+    for (const side of [-1, 1] as const) {
+      const sx = side * 14;
+      ctx.fillStyle = theme.normalShoes;
+      ctx.strokeStyle = '#09090B';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.ellipse(sx + side * 2, -2.5, 10.5, 5.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(sx - 6, 1);
+      ctx.lineTo(sx + side * 2 + 7, 1);
+      ctx.stroke();
+    }
 
-  // Shoes firmly planted at y=0
-  for (const side of [-1, 1] as const) {
-    const sx = side * 14;
-    ctx.fillStyle = shoesColor;
+    ctx.save();
+    ctx.translate(sway * 0.45, 0);
+
+    // Collared Shirt Torso
+    ctx.fillStyle = theme.normalShirt;
     ctx.strokeStyle = '#09090B';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.ellipse(sx + side * 2, -2.5, 10.5, 5.2, 0, 0, Math.PI * 2);
+    ctx.moveTo(-16.5, shoulderY + 2);
+    ctx.quadraticCurveTo(0, shoulderY - 3, 16.5, shoulderY + 2);
+    ctx.lineTo(14, hipY + 3);
+    ctx.quadraticCurveTo(0, hipY + 6, -14, hipY + 3);
+    ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    // White sole trim
-    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
-    ctx.lineWidth = 1.3;
-    ctx.beginPath();
-    ctx.moveTo(sx - 6, 1);
-    ctx.lineTo(sx + side * 2 + 7, 1);
-    ctx.stroke();
-  }
 
-  // Torso / Outfit transforming per character
-  ctx.save();
-  ctx.translate(sway * 0.45, 0);
-
-  ctx.fillStyle = shirtColor;
-  ctx.strokeStyle = '#09090B';
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(-16.5, shoulderY + 2);
-  ctx.quadraticCurveTo(0, shoulderY - 3, 16.5, shoulderY + 2);
-  ctx.lineTo(14, hipY + 3);
-  ctx.quadraticCurveTo(0, hipY + 6, -14, hipY + 3);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-
-  if (isNormalMode) {
-    // Neat collared button-up shirt + chest pocket + waist belt with buckle
+    // Neat collar flaps + buttons + pocket + waist belt with buckle
     ctx.fillStyle = theme.normalCollar;
     ctx.strokeStyle = '#09090B';
     ctx.lineWidth = 1.6;
-    // Left collar flap
     ctx.beginPath();
     ctx.moveTo(-7, shoulderY + 1);
     ctx.lineTo(-1, shoulderY + 11);
@@ -1009,7 +950,6 @@ function drawStandingShowcase(rc: RenderContext): void {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    // Right collar flap
     ctx.beginPath();
     ctx.moveTo(7, shoulderY + 1);
     ctx.lineTo(1, shoulderY + 11);
@@ -1018,7 +958,6 @@ function drawStandingShowcase(rc: RenderContext): void {
     ctx.fill();
     ctx.stroke();
 
-    // Center placket & buttons
     ctx.strokeStyle = 'rgba(0,0,0,0.28)';
     ctx.lineWidth = 1.4;
     ctx.beginPath();
@@ -1032,78 +971,17 @@ function drawStandingShowcase(rc: RenderContext): void {
       ctx.fill();
     }
 
-    // Small shirt pocket
     ctx.strokeStyle = 'rgba(0,0,0,0.32)';
     ctx.lineWidth = 1.4;
     ctx.strokeRect(5, shoulderY + 15, 7, 8);
 
-    // Waist belt + golden buckle
     ctx.fillStyle = '#18181B';
     ctx.fillRect(-14, hipY - 2, 28, 5.5);
     ctx.fillStyle = '#FACC15';
     ctx.fillRect(-3, hipY - 2, 6, 5.5);
-  } else if (theme.collar === 'pajama') {
-    // Pajama center buttons + collar lapel
-    ctx.strokeStyle = theme.topAccent;
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.moveTo(0, shoulderY + 4);
-    ctx.lineTo(0, hipY + 1);
-    ctx.stroke();
-    ctx.fillStyle = theme.topAccent;
-    for (const by of [shoulderY + 12, shoulderY + 22, shoulderY + 32]) {
-      ctx.beginPath();
-      ctx.arc(0, by, 1.8, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  } else if (theme.collar === 'hoodie') {
-    // Sunny hoodie pocket & drawstrings
-    ctx.fillStyle = 'rgba(0,0,0,0.18)';
-    ctx.beginPath();
-    ctx.roundRect(-9, hipY - 12, 18, 11, 4);
-    ctx.fill();
-    ctx.strokeStyle = theme.topAccent;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(-4, shoulderY + 4);
-    ctx.lineTo(-4, shoulderY + 16);
-    ctx.moveTo(4, shoulderY + 4);
-    ctx.lineTo(4, shoulderY + 16);
-    ctx.stroke();
-  } else if (theme.collar === 'jacket') {
-    // Arcade jacket crimson stripe & zipper
-    ctx.fillStyle = theme.topAccent;
-    ctx.fillRect(-13, shoulderY + 11, 26, 5);
-    ctx.strokeStyle = '#E4E4E7';
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.moveTo(0, shoulderY + 2);
-    ctx.lineTo(0, hipY + 2);
-    ctx.stroke();
-  } else if (theme.collar === 'vest') {
-    // Uncle cream undershirt V-neck inside vest
-    ctx.fillStyle = theme.topAccent;
-    ctx.beginPath();
-    ctx.moveTo(-7, shoulderY + 1);
-    ctx.lineTo(0, shoulderY + 16);
-    ctx.lineTo(7, shoulderY + 1);
-    ctx.closePath();
-    ctx.fill();
-  } else {
-    // Custom night-fighter chest emblem
-    ctx.strokeStyle = theme.topAccent;
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.moveTo(-9, shoulderY + 13);
-    ctx.lineTo(0, shoulderY + 21);
-    ctx.lineTo(9, shoulderY + 13);
-    ctx.stroke();
-  }
 
-  // Arms & Mode Silhouette (Normal Blaster vs Chudling Power Stance)
-  if (isNormalMode) {
-    // Left arm in tailored shirt sleeve with cuff
-    ctx.strokeStyle = shirtColor;
+    // Left arm in tailored shirt sleeve
+    ctx.strokeStyle = theme.normalShirt;
     ctx.lineWidth = 7.5;
     ctx.beginPath();
     ctx.moveTo(-15.5, shoulderY + 5);
@@ -1121,7 +999,7 @@ function drawStandingShowcase(rc: RenderContext): void {
     // Right arm in tailored shirt sleeve raised forward holding the fire-blaster
     const gunX = 28;
     const gunY = shoulderY + 4 + breathe * 0.3;
-    ctx.strokeStyle = shirtColor;
+    ctx.strokeStyle = theme.normalShirt;
     ctx.lineWidth = 7.5;
     ctx.beginPath();
     ctx.moveTo(15.5, shoulderY + 5);
@@ -1168,76 +1046,79 @@ function drawStandingShowcase(rc: RenderContext): void {
     ctx.arc(gunX + 1, gunY + 4, 4.4, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-  } else {
-    // Chudling Mode standing silhouette
-    const rubWave = Math.sin(rc.rubPhase * 0.55);
-    const tipX = 18;
-    const tipY = hipY - 12;
 
-    // Left arm confident on hip
-    ctx.strokeStyle = theme.topMain;
-    ctx.lineWidth = 7;
-    ctx.beginPath();
-    ctx.moveTo(-15, shoulderY + 5);
-    ctx.lineTo(-23, shoulderY + 21);
-    ctx.lineTo(-15, hipY + 1);
-    ctx.stroke();
+    // Neck connecting torso to upright head
     ctx.fillStyle = theme.skin;
     ctx.strokeStyle = '#09090B';
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.arc(-15, hipY + 2, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    ctx.lineWidth = 2;
+    ctx.fillRect(-5, shoulderY - 9, 10, 12);
+    ctx.strokeRect(-5, shoulderY - 9, 10, 12);
 
-    // Signature comic 3rd leg angled forward-upward
+    drawAvatarHead(ctx, sway * 0.25, headY, 22, avatarStyle, 'idle', customAvatarImg, time, 0, 0);
+  } else {
+    // Classic funny stick-figure hero for Chudling mode (clean lines with no white outline)
+    ctx.save();
+    ctx.translate(sway * 0.4, 0);
+
+    const rubWave = Math.sin(rc.rubPhase * 0.55);
+    const tipX = 20;
+    const tipY = hipY - 14;
+    const handX = 11 + rubWave * 2.5;
+    const handY = hipY - 5 + rubWave * 1.6;
+    const chestY = shoulderY + 6;
+
     ctx.strokeStyle = '#18161A';
-    ctx.lineWidth = 5;
+    ctx.lineWidth = 4.6;
     ctx.beginPath();
-    ctx.moveTo(4, hipY + 1);
+    // Neck & spine
+    ctx.moveTo(0, shoulderY - 6);
+    ctx.lineTo(0, hipY);
+    // Left leg + foot
+    ctx.moveTo(0, hipY);
+    ctx.lineTo(-14, -3);
+    ctx.lineTo(-20, -2);
+    // Right leg + foot
+    ctx.moveTo(0, hipY);
+    ctx.lineTo(14, -3);
+    ctx.lineTo(20, -2);
+    // Signature funny 3rd leg angled upward
+    ctx.moveTo(0, hipY - 1);
     ctx.lineTo(tipX, tipY);
+    // Left arm casual on hip
+    ctx.moveTo(0, chestY);
+    ctx.lineTo(-19, chestY + 17);
+    ctx.lineTo(-10, hipY - 3);
+    // Right arm reaching near 3rd leg
+    ctx.moveTo(0, chestY);
+    ctx.lineTo(18, chestY + 16);
+    ctx.lineTo(handX, handY);
     ctx.stroke();
 
-    // Glowing pure-white ready droplet at tip
+    // Stick hands
+    ctx.fillStyle = '#18161A';
+    for (const [hx, hy] of [
+      [-10, hipY - 3],
+      [handX, handY],
+    ]) {
+      ctx.beginPath();
+      ctx.arc(hx, hy, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Glowing pure-white ready droplet at the 3rd leg tip
     const pulse = Math.sin(time * 8) * 0.7;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
     ctx.beginPath();
-    ctx.arc(tipX + 2, tipY - 3, 7 + pulse, 0, Math.PI * 2);
+    ctx.arc(tipX + 2, tipY - 3, 7.5 + pulse, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#FFFFFF';
     ctx.beginPath();
-    ctx.ellipse(tipX + 2, tipY - 4, 3.6, 5.2 + pulse * 0.4, 0.4, 0, Math.PI * 2);
+    ctx.ellipse(tipX + 2, tipY - 4, 3.8, 5.4 + pulse * 0.4, 0.4, 0, Math.PI * 2);
     ctx.fill();
 
-    // Front arm reaching down near hip
-    const handX = 11 + rubWave * 2.4;
-    const handY = hipY - 5 + rubWave * 1.5;
-    ctx.strokeStyle = theme.topMain;
-    ctx.lineWidth = 7;
-    ctx.beginPath();
-    ctx.moveTo(15, shoulderY + 5);
-    ctx.lineTo(22, shoulderY + 22);
-    ctx.lineTo(handX, handY);
-    ctx.stroke();
-    ctx.fillStyle = theme.skin;
-    ctx.strokeStyle = '#09090B';
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.arc(handX, handY, 4.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    // Upright transforming character face!
+    drawAvatarHead(ctx, sway * 0.25, headY, 22, avatarStyle, 'idle', customAvatarImg, time, 0, 0);
   }
-
-  // Neck connecting torso to upright head
-  const headY = shoulderY - 22;
-  ctx.fillStyle = theme.skin;
-  ctx.strokeStyle = '#09090B';
-  ctx.lineWidth = 2;
-  ctx.fillRect(-5, shoulderY - 9, 10, 12);
-  ctx.strokeRect(-5, shoulderY - 9, 10, 12);
-
-  // Upright transforming character face!
-  drawAvatarHead(ctx, sway * 0.25, headY, 22, avatarStyle, 'idle', customAvatarImg, time, 0, 0);
 
   // Subtle floating Zzz only for Sleepy character
   if (avatarStyle === 'sleepy') {
@@ -1521,7 +1402,7 @@ function drawBedAndSleeper(rc: RenderContext): void {
     ctx.fill();
     ctx.stroke();
   } else {
-    // Chudling mode: rubs the cut 3rd leg at speed matching fire rate and blasts pure-white sticky liquid
+    // Chudling mode: classic funny stick-figure rubbing the cut 3rd leg and blasting pure-white sticky liquid
     const rubWave = Math.sin(rc.rubPhase);
     const rubT = 0.24 + 0.62 * (0.5 + 0.5 * rubWave);
     const legTipX = 14 + rubWave * 0.5;
@@ -1623,27 +1504,32 @@ function drawAvatarHead(
   }
 
   if (style === 'custom' && customImg && customImg.complete && customImg.naturalWidth > 0) {
+    const ovalRx = r * 1.02;
+    const ovalRy = r * 1.17;
+    const centerY = -r * 0.04;
+
     ctx.save();
     ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.ellipse(0, centerY, ovalRx, ovalRy, 0, 0, Math.PI * 2);
     ctx.clip();
-    const imgSize = r * 2;
-    const aspect = customImg.naturalWidth / customImg.naturalHeight;
-    let dw = imgSize;
-    let dh = imgSize;
-    if (aspect > 1) {
-      dw = imgSize * aspect;
-    } else {
-      dh = imgSize / aspect;
-    }
-    ctx.drawImage(customImg, -dw / 2, -dh / 2, dw, dh);
+
+    const targetW = ovalRx * 2;
+    const targetH = ovalRy * 2;
+    const imgW = customImg.naturalWidth;
+    const imgH = customImg.naturalHeight;
+    const scale = Math.max(targetW / imgW, targetH / imgH);
+    const dw = imgW * scale;
+    const dh = imgH * scale;
+    ctx.drawImage(customImg, -dw / 2, centerY - dh / 2, dw, dh);
     ctx.restore();
 
-    ctx.strokeStyle = '#1E1C21';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.stroke();
+    if (mood === 'bitten') {
+      ctx.fillStyle = '#EF4444';
+      ctx.beginPath();
+      ctx.arc(r * 0.65, r * 0.28, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     ctx.restore();
     return;
   }
