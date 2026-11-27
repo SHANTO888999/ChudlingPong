@@ -41,6 +41,7 @@ service cloud.firestore {
           'uid',
           'playerName',
           'score',
+          'totalScore',
           'fireMode',
           'zappedCount',
           'bestCombo',
@@ -51,6 +52,7 @@ service cloud.firestore {
           'uid',
           'playerName',
           'score',
+          'totalScore',
           'fireMode',
           'zappedCount',
           'bestCombo',
@@ -65,6 +67,10 @@ service cloud.firestore {
         && data.score is int
         && data.score >= 0
         && data.score <= 100000
+        && data.totalScore is int
+        && data.totalScore >= 0
+        && data.totalScore <= 10000000
+        && data.totalScore >= data.score
         && data.fireMode is string
         && data.fireMode in ['hand', 'thirdLeg']
         && data.zappedCount is int
@@ -80,7 +86,10 @@ service cloud.firestore {
     // Public PII-free arcade leaderboard (optional Google login + unique guest IDs)
     match /leaderboard/{entryId} {
       allow get: if isValidId(entryId);
-      allow list: if resource.data.score >= 0
+      allow list: if (
+          resource.data.score >= 0
+          || resource.data.totalScore >= 0
+        )
         && request.query.limit != null
         && request.query.limit <= 50;
 
@@ -118,14 +127,16 @@ service cloud.firestore {
           (
             isValidGuestId(entryId)
             && incoming().isGuest == true
-            && existing().isGuest == true
+            && (!('isGuest' in existing()) || existing().isGuest == true)
           )
         )
         && (
           incoming().score >= existing().score
+          && (!('totalScore' in existing()) || incoming().totalScore >= existing().totalScore)
           && incoming().diff(existing()).affectedKeys().hasOnly([
             'playerName',
             'score',
+            'totalScore',
             'fireMode',
             'zappedCount',
             'bestCombo',

@@ -551,6 +551,39 @@ class SoundEngine {
       osc.stop(t + 0.21);
     });
   }
+
+  public playAchievement(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const notes = [523.25, 659.25, 783.99, 987.77, 1046.5];
+    notes.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = idx === notes.length - 1 ? 'triangle' : 'sine';
+      const t = now + idx * 0.075;
+      const dur = idx === notes.length - 1 ? 0.52 : 0.22;
+      osc.frequency.setValueAtTime(freq, t);
+      gain.gain.setValueAtTime(idx === notes.length - 1 ? 0.28 : 0.2, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      osc.connect(gain);
+      gain.connect(this.getOutputNode(ctx));
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    });
+
+    const bass = ctx.createOscillator();
+    const bassGain = ctx.createGain();
+    bass.type = 'triangle';
+    bass.frequency.setValueAtTime(261.63, now + 0.28);
+    bassGain.gain.setValueAtTime(0.22, now + 0.28);
+    bassGain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+    bass.connect(bassGain);
+    bassGain.connect(this.getOutputNode(ctx));
+    bass.start(now + 0.28);
+    bass.stop(now + 0.82);
+  }
 }
 
 export const soundEngine = new SoundEngine();

@@ -21,7 +21,11 @@
         },
         "score": {
           "type": "integer",
-          "description": "Best arcade score achieved by the player."
+          "description": "Best single-run score achieved by the player."
+        },
+        "totalScore": {
+          "type": "integer",
+          "description": "Cumulative total score across all runs achieved by the player (primary leaderboard ranking)."
         },
         "fireMode": {
           "type": "string",
@@ -50,6 +54,7 @@
         "uid",
         "playerName",
         "score",
+        "totalScore",
         "fireMode",
         "zappedCount",
         "bestCombo",

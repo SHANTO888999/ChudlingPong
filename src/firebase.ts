@@ -101,10 +101,12 @@ export interface LeaderboardRecord {
   uid: string;
   playerName: string;
   score: number;
+  totalScore: number;
   fireMode: FireMode;
   zappedCount: number;
   bestCombo: number;
   isGuest?: boolean;
+  hasTotalField?: boolean;
   updatedAt?: Timestamp;
 }
 
@@ -117,6 +119,8 @@ interface PendingSyncPayload {
   ownerUid: string;
   playerName: string;
   score: number;
+  totalScore: number;
+  runDelta: number;
   fireMode: FireMode;
   zappedCount: number;
   bestCombo: number;
@@ -140,21 +144,30 @@ export function loadCachedLeaderboard(): LeaderboardRecord[] {
           typeof item.score === 'number' &&
           Number.isFinite(item.score)
       )
-      .map((item) => ({
-        uid: item.uid,
-        playerName: sanitizePlayerName(item.playerName),
-        score: Math.max(0, Math.floor(item.score)),
-        fireMode: item.fireMode === 'hand' ? 'hand' : 'thirdLeg',
-        zappedCount:
-          typeof item.zappedCount === 'number' && Number.isFinite(item.zappedCount)
-            ? Math.max(0, Math.floor(item.zappedCount))
-            : 0,
-        bestCombo:
-          typeof item.bestCombo === 'number' && Number.isFinite(item.bestCombo)
-            ? Math.max(0, Math.floor(item.bestCombo))
-            : 0,
-        isGuest: Boolean(item.isGuest),
-      }));
+      .map((item): LeaderboardRecord => {
+        const cleanScore = Math.max(0, Math.floor(item.score));
+        const cleanTotal =
+          typeof item.totalScore === 'number' && Number.isFinite(item.totalScore)
+            ? Math.max(cleanScore, Math.floor(item.totalScore))
+            : cleanScore;
+        return {
+          uid: item.uid,
+          playerName: sanitizePlayerName(item.playerName),
+          score: cleanScore,
+          totalScore: cleanTotal,
+          fireMode: item.fireMode === 'hand' ? 'hand' : 'thirdLeg',
+          zappedCount:
+            typeof item.zappedCount === 'number' && Number.isFinite(item.zappedCount)
+              ? Math.max(0, Math.floor(item.zappedCount))
+              : 0,
+          bestCombo:
+            typeof item.bestCombo === 'number' && Number.isFinite(item.bestCombo)
+              ? Math.max(0, Math.floor(item.bestCombo))
+              : 0,
+          isGuest: Boolean(item.isGuest),
+        };
+      })
+      .sort((a, b) => b.totalScore - a.totalScore || b.score - a.score);
   } catch {
     return [];
   }
@@ -167,6 +180,7 @@ export function saveCachedLeaderboard(entries: LeaderboardRecord[]): void {
       uid: e.uid,
       playerName: e.playerName,
       score: e.score,
+      totalScore: Math.max(e.score, e.totalScore ?? e.score),
       fireMode: e.fireMode,
       zappedCount: e.zappedCount,
       bestCombo: e.bestCombo,
@@ -182,6 +196,7 @@ export function mergeLocalEntryIntoCache(entry: {
   uid: string;
   playerName: string;
   score: number;
+  totalScore: number;
   fireMode: FireMode;
   zappedCount: number;
   bestCombo: number;
@@ -191,29 +206,31 @@ export function mergeLocalEntryIntoCache(entry: {
   const idx = existing.findIndex((row) => row.uid === entry.uid);
   const prev = idx >= 0 ? existing[idx] : null;
   const isNewHigh = !prev || entry.score > prev.score;
-  const merged: LeaderboardRecord = isNewHigh
-    ? {
-        uid: entry.uid,
-        playerName: entry.playerName,
-        score: entry.score,
-        fireMode: entry.fireMode,
-        zappedCount: entry.zappedCount,
-        bestCombo: entry.bestCombo,
-        isGuest: entry.isGuest,
-      }
-    : {
-        uid: entry.uid,
-        playerName: entry.playerName,
-        score: prev.score,
-        fireMode: prev.fireMode,
-        zappedCount:
-          entry.score === prev.score && entry.zappedCount > 0 ? entry.zappedCount : prev.zappedCount,
-        bestCombo:
-          entry.score === prev.score && entry.bestCombo > 0 ? entry.bestCombo : prev.bestCombo,
-        isGuest: entry.isGuest,
-      };
+  const nextBest = prev ? Math.max(prev.score, entry.score) : entry.score;
+  const nextTotal = Math.max(nextBest, entry.totalScore, prev ? prev.totalScore : 0);
+
+  const merged: LeaderboardRecord = {
+    uid: entry.uid,
+    playerName: entry.playerName,
+    score: nextBest,
+    totalScore: nextTotal,
+    fireMode: isNewHigh || !prev ? entry.fireMode : prev.fireMode,
+    zappedCount:
+      isNewHigh || !prev
+        ? entry.zappedCount
+        : entry.score === prev.score && entry.zappedCount > 0
+          ? entry.zappedCount
+          : prev.zappedCount,
+    bestCombo:
+      isNewHigh || !prev
+        ? entry.bestCombo
+        : entry.score === prev.score && entry.bestCombo > 0
+          ? entry.bestCombo
+          : prev.bestCombo,
+    isGuest: entry.isGuest,
+  };
   const next = [...existing.filter((row) => row.uid !== entry.uid), merged]
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.totalScore - a.totalScore || b.score - a.score)
     .slice(0, 20);
   saveCachedLeaderboard(next);
   return next;
@@ -229,6 +246,8 @@ function savePendingOfflineSync(payload: PendingSyncPayload): void {
             ownerUid: payload.ownerUid,
             playerName: payload.playerName,
             score: Math.max(existing.score, payload.score),
+            totalScore: Math.max(existing.totalScore, payload.totalScore),
+            runDelta: Math.max(0, existing.runDelta + payload.runDelta),
             fireMode: payload.score >= existing.score ? payload.fireMode : existing.fireMode,
             zappedCount: Math.max(existing.zappedCount, payload.zappedCount),
             bestCombo: Math.max(existing.bestCombo, payload.bestCombo),
@@ -254,10 +273,19 @@ export function loadPendingOfflineSync(): PendingSyncPayload | null {
     ) {
       return null;
     }
+    const cleanScore = Math.max(0, Math.floor(parsed.score));
     return {
       ownerUid: parsed.ownerUid,
       playerName: parsed.playerName,
-      score: parsed.score,
+      score: cleanScore,
+      totalScore:
+        typeof parsed.totalScore === 'number' && Number.isFinite(parsed.totalScore)
+          ? Math.max(cleanScore, Math.floor(parsed.totalScore))
+          : cleanScore,
+      runDelta:
+        typeof parsed.runDelta === 'number' && Number.isFinite(parsed.runDelta)
+          ? Math.max(0, Math.floor(parsed.runDelta))
+          : 0,
       fireMode: parsed.fireMode === 'hand' ? 'hand' : 'thirdLeg',
       zappedCount: typeof parsed.zappedCount === 'number' ? parsed.zappedCount : 0,
       bestCombo: typeof parsed.bestCombo === 'number' ? parsed.bestCombo : 0,
@@ -382,48 +410,148 @@ export function subscribeLeaderboard(
   maxEntries: number = 20
 ): () => void {
   const boundedLimit = Math.max(1, Math.min(50, Math.floor(maxEntries)));
+  const fetchLimit = 50;
   const path = 'leaderboard';
-  const q = query(
+
+  const qByTotal = query(
+    collection(db, path),
+    where('totalScore', '>=', 0),
+    orderBy('totalScore', 'desc'),
+    limit(fetchLimit)
+  );
+  const qByBest = query(
     collection(db, path),
     where('score', '>=', 0),
     orderBy('score', 'desc'),
-    limit(boundedLimit)
+    limit(fetchLimit)
   );
 
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const rows: LeaderboardRecord[] = snapshot.docs.map((d) => d.data() as LeaderboardRecord);
-      const pending = loadPendingOfflineSync();
-      if (pending) {
-        const merged = [...rows];
-        const idx = merged.findIndex((r) => r.uid === pending.ownerUid);
-        if (idx >= 0) {
-          if (pending.score > merged[idx].score) {
-            merged[idx] = { ...merged[idx], ...pending, uid: pending.ownerUid };
-          }
-        } else {
-          merged.push({ ...pending, uid: pending.ownerUid });
-        }
-        merged.sort((a, b) => b.score - a.score);
-        const top = merged.slice(0, boundedLimit);
-        saveCachedLeaderboard(top);
-        onData(top);
-      } else {
-        saveCachedLeaderboard(rows);
-        onData(rows);
-      }
-    },
-    (error) => {
-      try {
-        handleFirestoreError(error, OperationType.LIST, path);
-      } catch (wrapped) {
-        if (onError) {
-          onError(wrapped);
-        }
+  let totalRows: LeaderboardRecord[] = [];
+  let bestRows: LeaderboardRecord[] = [];
+  let hasTotalSnapshot = false;
+  let hasBestSnapshot = false;
+  let totalError: unknown = null;
+  let bestError: unknown = null;
+
+  const mapDoc = (d: { id: string; data: () => unknown }): LeaderboardRecord => {
+    const raw = d.data() as Partial<LeaderboardRecord>;
+    const cleanScore = typeof raw.score === 'number' ? Math.max(0, Math.floor(raw.score)) : 0;
+    const cleanTotal =
+      typeof raw.totalScore === 'number'
+        ? Math.max(cleanScore, Math.floor(raw.totalScore))
+        : cleanScore;
+    return {
+      uid: raw.uid || d.id,
+      playerName: sanitizePlayerName(raw.playerName || 'Player'),
+      score: cleanScore,
+      totalScore: cleanTotal,
+      fireMode: raw.fireMode === 'hand' ? 'hand' : 'thirdLeg',
+      zappedCount: typeof raw.zappedCount === 'number' ? raw.zappedCount : 0,
+      bestCombo: typeof raw.bestCombo === 'number' ? raw.bestCombo : 0,
+      isGuest: Boolean(raw.isGuest),
+      hasTotalField: typeof raw.totalScore === 'number',
+      updatedAt: raw.updatedAt,
+    };
+  };
+
+  const emitMerged = () => {
+    if (!hasTotalSnapshot && !hasBestSnapshot) return;
+
+    const mergedMap = new Map<string, LeaderboardRecord>();
+    for (const row of bestRows) {
+      mergedMap.set(row.uid, row);
+    }
+    for (const row of totalRows) {
+      const prev = mergedMap.get(row.uid);
+      if (!prev || row.totalScore >= prev.totalScore || row.score >= prev.score) {
+        mergedMap.set(row.uid, {
+          ...prev,
+          ...row,
+          score: Math.max(prev ? prev.score : 0, row.score),
+          totalScore: Math.max(prev ? prev.totalScore : 0, row.totalScore),
+        });
       }
     }
+
+    const pending = loadPendingOfflineSync();
+    if (pending) {
+      const existing = mergedMap.get(pending.ownerUid);
+      if (existing) {
+        const nextBest = Math.max(existing.score, pending.score);
+        const nextTotal = Math.max(
+          nextBest,
+          pending.totalScore,
+          existing.totalScore + pending.runDelta
+        );
+        if (nextTotal > existing.totalScore || nextBest > existing.score) {
+          mergedMap.set(pending.ownerUid, {
+            ...existing,
+            ...pending,
+            uid: pending.ownerUid,
+            score: nextBest,
+            totalScore: nextTotal,
+          });
+        }
+      } else {
+        mergedMap.set(pending.ownerUid, { ...pending, uid: pending.ownerUid });
+      }
+    }
+
+    const combined = Array.from(mergedMap.values())
+      .sort((a, b) => b.totalScore - a.totalScore || b.score - a.score)
+      .slice(0, boundedLimit);
+
+    saveCachedLeaderboard(combined);
+    onData(combined);
+  };
+
+  const handleQueryError = (error: unknown, source: 'total' | 'best') => {
+    if (source === 'total') {
+      totalError = error;
+    } else {
+      bestError = error;
+    }
+    try {
+      handleFirestoreError(error, OperationType.LIST, path);
+    } catch (wrapped) {
+      if (onError && totalError && bestError) {
+        onError(wrapped);
+      } else if (onError && source === 'best' && !hasTotalSnapshot && !hasBestSnapshot) {
+        onError(wrapped);
+      }
+    }
+  };
+
+  const unsubTotal = onSnapshot(
+    qByTotal,
+    (snapshot) => {
+      totalRows = snapshot.docs.map(mapDoc);
+      hasTotalSnapshot = true;
+      totalError = null;
+      emitMerged();
+    },
+    (error) => {
+      handleQueryError(error, 'total');
+    }
   );
+
+  const unsubBest = onSnapshot(
+    qByBest,
+    (snapshot) => {
+      bestRows = snapshot.docs.map(mapDoc);
+      hasBestSnapshot = true;
+      bestError = null;
+      emitMerged();
+    },
+    (error) => {
+      handleQueryError(error, 'best');
+    }
+  );
+
+  return () => {
+    unsubTotal();
+    unsubBest();
+  };
 }
 
 export async function fetchUserCloudScore(uid: string): Promise<LeaderboardRecord | null> {
@@ -431,7 +559,23 @@ export async function fetchUserCloudScore(uid: string): Promise<LeaderboardRecor
   try {
     const snap = await getDoc(doc(db, 'leaderboard', uid));
     if (!snap.exists()) return null;
-    return snap.data() as LeaderboardRecord;
+    const raw = snap.data() as Partial<LeaderboardRecord>;
+    const cleanScore = typeof raw.score === 'number' ? Math.max(0, Math.floor(raw.score)) : 0;
+    return {
+      uid: raw.uid || snap.id,
+      playerName: sanitizePlayerName(raw.playerName || 'Player'),
+      score: cleanScore,
+      totalScore:
+        typeof raw.totalScore === 'number'
+          ? Math.max(cleanScore, Math.floor(raw.totalScore))
+          : cleanScore,
+      fireMode: raw.fireMode === 'hand' ? 'hand' : 'thirdLeg',
+      zappedCount: typeof raw.zappedCount === 'number' ? raw.zappedCount : 0,
+      bestCombo: typeof raw.bestCombo === 'number' ? raw.bestCombo : 0,
+      isGuest: Boolean(raw.isGuest),
+      hasTotalField: typeof raw.totalScore === 'number',
+      updatedAt: raw.updatedAt,
+    };
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, path);
   }
@@ -440,29 +584,45 @@ export async function fetchUserCloudScore(uid: string): Promise<LeaderboardRecor
 export async function submitLeaderboardScore(params: {
   playerName: string;
   score: number;
+  totalScore: number;
+  runDelta?: number;
   fireMode: FireMode;
   zappedCount: number;
   bestCombo: number;
   allowSameScoreRename?: boolean;
-}): Promise<{ saved: boolean; bestScore: number; reason?: string; offlineQueued?: boolean }> {
+}): Promise<{
+  saved: boolean;
+  bestScore: number;
+  totalScore: number;
+  reason?: string;
+  offlineQueued?: boolean;
+}> {
   const user = auth.currentUser;
   const isGuest = !user;
   const ownerUid = user ? user.uid : getOrCreateGuestId();
 
   const rawScore = Number.isFinite(params.score) ? Math.floor(params.score) : 0;
+  const rawTotal = Number.isFinite(params.totalScore) ? Math.floor(params.totalScore) : rawScore;
+  const rawDelta =
+    typeof params.runDelta === 'number' && Number.isFinite(params.runDelta)
+      ? Math.floor(params.runDelta)
+      : 0;
   const rawZapped = Number.isFinite(params.zappedCount) ? Math.floor(params.zappedCount) : 0;
   const rawCombo = Number.isFinite(params.bestCombo) ? Math.floor(params.bestCombo) : 0;
+
   const clampedScore = Math.max(0, Math.min(100000, rawScore));
+  const clampedDelta = Math.max(0, Math.min(100000, rawDelta));
+  const clampedTotal = Math.max(clampedScore, Math.min(10000000, rawTotal));
   const clampedZapped = Math.max(0, Math.min(100000, rawZapped));
   const clampedCombo = Math.max(0, Math.min(10000, rawCombo));
   const safeName = sanitizePlayerName(params.playerName);
   const safeMode: FireMode = params.fireMode === 'hand' ? 'hand' : 'thirdLeg';
 
-  // Always update local cached leaderboard immediately so offline points are visible
   mergeLocalEntryIntoCache({
     uid: ownerUid,
     playerName: safeName,
     score: clampedScore,
+    totalScore: clampedTotal,
     fireMode: safeMode,
     zappedCount: clampedZapped,
     bestCombo: clampedCombo,
@@ -474,18 +634,27 @@ export async function submitLeaderboardScore(params: {
       ownerUid,
       playerName: safeName,
       score: clampedScore,
+      totalScore: clampedTotal,
+      runDelta: clampedDelta,
       fireMode: safeMode,
       zappedCount: clampedZapped,
       bestCombo: clampedCombo,
       isGuest,
     });
-    return { saved: true, bestScore: clampedScore, offlineQueued: true };
+    return {
+      saved: true,
+      bestScore: clampedScore,
+      totalScore: clampedTotal,
+      offlineQueued: true,
+    };
   }
 
   const entryPath = `leaderboard/${ownerUid}`;
   const docRef = doc(db, 'leaderboard', ownerUid);
 
   let existingScore = -1;
+  let existingTotal = 0;
+  let existingHasTotalField = false;
   let existingZapped = 0;
   let existingCombo = 0;
   let existingMode: FireMode = safeMode;
@@ -495,6 +664,12 @@ export async function submitLeaderboardScore(params: {
       const existingData = existingSnap.data() as Partial<LeaderboardRecord>;
       if (typeof existingData.score === 'number') {
         existingScore = existingData.score;
+      }
+      if (typeof existingData.totalScore === 'number') {
+        existingTotal = existingData.totalScore;
+        existingHasTotalField = true;
+      } else if (existingScore >= 0) {
+        existingTotal = existingScore;
       }
       if (typeof existingData.zappedCount === 'number') {
         existingZapped = existingData.zappedCount;
@@ -507,11 +682,12 @@ export async function submitLeaderboardScore(params: {
       }
     }
   } catch (error) {
-    // Queue offline if network dropped mid-request
     savePendingOfflineSync({
       ownerUid,
       playerName: safeName,
       score: clampedScore,
+      totalScore: clampedTotal,
+      runDelta: clampedDelta,
       fireMode: safeMode,
       zappedCount: clampedZapped,
       bestCombo: clampedCombo,
@@ -520,28 +696,42 @@ export async function submitLeaderboardScore(params: {
     handleFirestoreError(error, OperationType.GET, entryPath);
   }
 
-  if (existingScore >= 0 && clampedScore < existingScore) {
+  const nextBest = Math.max(0, existingScore, clampedScore);
+  const nextTotal = Math.min(
+    10000000,
+    Math.max(nextBest, clampedTotal, existingTotal + clampedDelta)
+  );
+
+  const nothingNewToSave =
+    existingScore >= 0 &&
+    existingHasTotalField &&
+    nextBest <= existingScore &&
+    nextTotal <= existingTotal &&
+    !params.allowSameScoreRename;
+
+  if (nothingNewToSave) {
     clearPendingOfflineSync();
-    return { saved: false, bestScore: existingScore, reason: 'below_existing_best' };
+    return {
+      saved: false,
+      bestScore: existingScore,
+      totalScore: existingTotal,
+      reason: 'already_synced',
+    };
   }
 
-  if (existingScore >= 0 && clampedScore === existingScore && !params.allowSameScoreRename) {
-    clearPendingOfflineSync();
-    return { saved: false, bestScore: existingScore, reason: 'already_synced' };
-  }
-
-  const isHigherScore = existingScore < 0 || clampedScore > existingScore;
+  const isHigherBest = existingScore < 0 || clampedScore > existingScore;
   const payload = {
     uid: ownerUid,
     playerName: safeName,
-    score: clampedScore,
-    fireMode: isHigherScore ? safeMode : existingMode,
-    zappedCount: isHigherScore
+    score: nextBest,
+    totalScore: nextTotal,
+    fireMode: isHigherBest ? safeMode : existingMode,
+    zappedCount: isHigherBest
       ? clampedZapped
       : clampedZapped > 0
         ? clampedZapped
         : existingZapped,
-    bestCombo: isHigherScore
+    bestCombo: isHigherBest
       ? clampedCombo
       : clampedCombo > 0
         ? clampedCombo
@@ -553,12 +743,24 @@ export async function submitLeaderboardScore(params: {
   try {
     await setDoc(docRef, payload);
     clearPendingOfflineSync();
-    return { saved: true, bestScore: clampedScore };
+    mergeLocalEntryIntoCache({
+      uid: ownerUid,
+      playerName: safeName,
+      score: nextBest,
+      totalScore: nextTotal,
+      fireMode: payload.fireMode,
+      zappedCount: payload.zappedCount,
+      bestCombo: payload.bestCombo,
+      isGuest,
+    });
+    return { saved: true, bestScore: nextBest, totalScore: nextTotal };
   } catch (error) {
     savePendingOfflineSync({
       ownerUid,
       playerName: safeName,
-      score: clampedScore,
+      score: nextBest,
+      totalScore: nextTotal,
+      runDelta: clampedDelta,
       fireMode: safeMode,
       zappedCount: clampedZapped,
       bestCombo: clampedCombo,
@@ -572,7 +774,11 @@ export async function submitLeaderboardScore(params: {
   }
 }
 
-export async function flushPendingOfflineSync(): Promise<{ synced: boolean; bestScore?: number }> {
+export async function flushPendingOfflineSync(): Promise<{
+  synced: boolean;
+  bestScore?: number;
+  totalScore?: number;
+}> {
   const pending = loadPendingOfflineSync();
   if (!pending) return { synced: false };
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -582,6 +788,8 @@ export async function flushPendingOfflineSync(): Promise<{ synced: boolean; best
     const res = await submitLeaderboardScore({
       playerName: pending.playerName,
       score: pending.score,
+      totalScore: pending.totalScore,
+      runDelta: pending.runDelta,
       fireMode: pending.fireMode,
       zappedCount: pending.zappedCount,
       bestCombo: pending.bestCombo,
@@ -589,9 +797,9 @@ export async function flushPendingOfflineSync(): Promise<{ synced: boolean; best
     });
     if (res.saved && !res.offlineQueued) {
       clearPendingOfflineSync();
-      return { synced: true, bestScore: res.bestScore };
+      return { synced: true, bestScore: res.bestScore, totalScore: res.totalScore };
     }
-    if (res.reason === 'below_existing_best' || res.reason === 'already_synced') {
+    if (res.reason === 'already_synced') {
       clearPendingOfflineSync();
     }
     return { synced: false };

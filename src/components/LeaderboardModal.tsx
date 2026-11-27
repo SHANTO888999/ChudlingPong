@@ -9,6 +9,7 @@ import {
   signOutUser,
   submitLeaderboardScore,
 } from '../firebase';
+import { getAchievementForLevel, getLevelFromScore } from '../game/levels';
 import type { FireMode } from '../game/types';
 
 interface LeaderboardModalProps {
@@ -21,6 +22,7 @@ interface LeaderboardModalProps {
   playerName: string;
   onPlayerNameChange: (name: string) => void;
   bestScore: number;
+  totalScore: number;
   bestMode: FireMode;
   bestZapped: number;
   bestCombo: number;
@@ -37,6 +39,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
   playerName,
   onPlayerNameChange,
   bestScore,
+  totalScore,
   bestMode,
   bestZapped,
   bestCombo,
@@ -77,12 +80,14 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
   const handleNicknameAutoSave = async () => {
     const cleanName = saveLocalPlayerName(playerName);
     onPlayerNameChange(cleanName);
-    if (bestScore <= 0) return;
+    if (bestScore <= 0 && totalScore <= 0) return;
     setBusy(true);
     try {
       await submitLeaderboardScore({
         playerName: cleanName,
         score: bestScore,
+        totalScore,
+        runDelta: 0,
         fireMode: bestMode,
         zappedCount: bestZapped,
         bestCombo,
@@ -123,8 +128,11 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
 
         {/* Name & Sign-In Bar */}
         <div className="px-4 py-3 bg-white/6 border-b border-white/12 flex flex-col gap-2">
-          <div className="flex items-center justify-end text-[11px] font-bold">
-            <span className="text-emerald-400 tabular-nums">Best {bestScore}</span>
+          <div className="flex items-center justify-between text-[11px] font-bold tabular-nums">
+            <span className="text-amber-300">
+              LV {getLevelFromScore(totalScore)} · Best {bestScore.toLocaleString()}
+            </span>
+            <span className="text-emerald-400">Total {totalScore.toLocaleString()}</span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -166,6 +174,17 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
           </div>
         </div>
 
+        {/* Column Labels */}
+        {!loading && !errorText && entries.length > 0 && (
+          <div className="px-4 pt-2 pb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-zinc-400 border-b border-white/8">
+            <span>Player</span>
+            <div className="flex items-center gap-3">
+              <span className="w-14 text-right">Best</span>
+              <span className="w-16 text-right text-emerald-400">Total</span>
+            </div>
+          </div>
+        )}
+
         {/* Entries List */}
         <div className="flex-1 overflow-y-auto px-3 py-2.5 space-y-1.5">
           {loading ? (
@@ -177,6 +196,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
           ) : (
             entries.map((entry, index) => {
               const isSelf = activeUid === entry.uid;
+              const entryTotal = Math.max(entry.score, entry.totalScore ?? entry.score);
               return (
                 <div
                   key={entry.uid}
@@ -187,7 +207,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
                   }`}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="w-6 text-center text-xs font-extrabold tabular-nums text-zinc-300">
+                    <span className="w-6 text-center text-xs font-extrabold tabular-nums text-zinc-300 shrink-0">
                       {index === 0 ? (
                         <Crown className="w-4 h-4 text-amber-400 mx-auto" />
                       ) : (
@@ -199,14 +219,20 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
                         {entry.playerName}
                         {isSelf ? ' (You)' : ''}
                       </p>
-                      <p className="text-[10px] text-zinc-400">
-                        {entry.fireMode === 'hand' ? 'Normal' : 'Chudling'}
+                      <p className="text-[10px] text-zinc-400 truncate">
+                        LV {getLevelFromScore(entryTotal)} ·{' '}
+                        {getAchievementForLevel(getLevelFromScore(entryTotal)).title}
                       </p>
                     </div>
                   </div>
-                  <span className="font-display text-base font-extrabold tabular-nums text-white pl-2">
-                    {entry.score}
-                  </span>
+                  <div className="flex items-center gap-3 shrink-0 pl-2 tabular-nums">
+                    <span className="w-14 text-right text-xs font-bold text-amber-300">
+                      {entry.score.toLocaleString()}
+                    </span>
+                    <span className="w-16 text-right font-display text-sm font-extrabold text-white">
+                      {entryTotal.toLocaleString()}
+                    </span>
+                  </div>
                 </div>
               );
             })

@@ -1,19 +1,26 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
 import {
+  ArrowLeft,
+  Check,
   Heart,
+  LogIn,
+  LogOut,
   Pause,
+  Pencil,
   Play,
   RotateCcw,
   Share2,
   Trophy,
   Upload,
+  User as UserIcon,
   Volume2,
   VolumeX,
-  X,
   Zap,
 } from 'lucide-react';
 import { soundEngine } from './audio/soundEngine';
+import { AchievementCelebration } from './components/AchievementCelebration';
+import { AchievementsModal } from './components/AchievementsModal';
 import { FaceCropModal } from './components/FaceCropModal';
 import { LeaderboardModal } from './components/LeaderboardModal';
 import { PWAInstallButton } from './components/PWAInstallButton';
@@ -25,10 +32,19 @@ import {
   loadCachedLeaderboard,
   loadSavedPlayerName,
   saveLocalPlayerName,
+  signInWithGoogle,
+  signOutUser,
   submitLeaderboardScore,
   subscribeAuth,
   subscribeLeaderboard,
 } from './firebase';
+import {
+  getAchievementForLevel,
+  getLevelFromScore,
+  getLevelProgress,
+  getMaxLivesForLevel,
+  type LevelAchievement,
+} from './game/levels';
 import { getBedOrigin, getSleeperTarget, renderGame } from './game/renderer';
 import {
   AvatarStyle,
@@ -48,6 +64,8 @@ import { loadImageForCrop } from './utils/imageLoader';
 import { shareChudlingPong } from './utils/shareCard';
 
 const BEST_SCORE_KEY = 'sleepy_zapper_best_v1';
+const TOTAL_SCORE_KEY = 'sleepy_zapper_total_v1';
+const LAST_ACHIEVED_LV_KEY = 'sleepy_zapper_last_ach_lv_v1';
 const BEST_ZAPPED_KEY = 'sleepy_zapper_best_zapped_v1';
 const BEST_COMBO_KEY = 'sleepy_zapper_best_combo_v1';
 const BEST_MODE_KEY = 'sleepy_zapper_best_mode_v1';
@@ -67,6 +85,18 @@ function loadBestScore(): number {
   if (typeof window === 'undefined') return 0;
   const parsed = Number.parseInt(localStorage.getItem(BEST_SCORE_KEY) || '0', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function loadTotalScore(): number {
+  if (typeof window === 'undefined') return 0;
+  const parsed = Number.parseInt(localStorage.getItem(TOTAL_SCORE_KEY) || '0', 10);
+  const clean = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  return Math.max(clean, loadBestScore());
+}
+
+function saveTotalScore(total: number): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(TOTAL_SCORE_KEY, String(Math.max(0, Math.floor(total))));
 }
 
 function loadBestOwner(): string | null {
@@ -171,6 +201,8 @@ export default function App() {
   const [fireMode, setFireMode] = useState<FireMode>(() => loadFireMode());
   const [score, setScore] = useState<number>(0);
   const [bestScore, setBestScore] = useState<number>(() => loadBestScore());
+  const [totalScore, setTotalScore] = useState<number>(() => loadTotalScore());
+  const [level, setLevel] = useState<number>(() => getLevelFromScore(loadTotalScore()));
   const [isNewBest, setIsNewBest] = useState<boolean>(false);
   const [lives, setLives] = useState<number>(3);
   const [maxLives, setMaxLives] = useState<number>(3);
@@ -197,6 +229,10 @@ export default function App() {
   );
   const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
   const [shareLabel, setShareLabel] = useState<string>('Share');
+  const [editingProfileName, setEditingProfileName] = useState<boolean>(false);
+  const [profileBusy, setProfileBusy] = useState<boolean>(false);
+  const [achievementsOpen, setAchievementsOpen] = useState<boolean>(false);
+  const [showcaseAchievement, setShowcaseAchievement] = useState<LevelAchievement | null>(null);
 
   // Mutable simulation state inside ref for smooth 60fps loop
   const simRef = useRef({
@@ -206,6 +242,9 @@ export default function App() {
     playTime: 0,
     score: 0,
     bestScore: loadBestScore(),
+    baseTotalAtRunStart: loadTotalScore(),
+    settledPointsForThisRun: 0,
+    currentLevel: getLevelFromScore(loadTotalScore()),
     crossedBestThisRun: false,
     lives: 3,
     combo: 0,
@@ -256,6 +295,9 @@ export default function App() {
   const playerNameRef = useRef<string>(playerName);
   playerNameRef.current = playerName;
 
+  const totalScoreRef = useRef<number>(totalScore);
+  totalScoreRef.current = totalScore;
+
   const customAvatarImgRef = useRef<HTMLImageElement | null>(null);
   const uploadSeqRef = useRef<number>(0);
 
@@ -263,14 +305,38 @@ export default function App() {
     typeof window !== 'undefined' &&
     window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
+  // Show profile achievement unlock animation on the Home/Profile screen whenever a new level >= 2 is reached
+  useEffect(() => {
+    if (typeof window === 'undefined' || gameState !== 'TITLE_MENU') return;
+    const savedLvRaw = localStorage.getItem(LAST_ACHIEVED_LV_KEY);
+    const savedLv = savedLvRaw ? Number.parseInt(savedLvRaw, 10) : 1;
+    const currentLv = getLevelFromScore(totalScore);
+    if (currentLv >= 2 && (!Number.isFinite(savedLv) || currentLv > savedLv)) {
+      localStorage.setItem(LAST_ACHIEVED_LV_KEY, String(currentLv));
+      soundEngine.playAchievement();
+      setShowcaseAchievement(getAchievementForLevel(currentLv));
+    } else if (!savedLvRaw) {
+      localStorage.setItem(LAST_ACHIEVED_LV_KEY, String(currentLv));
+    }
+  }, [gameState, totalScore]);
+
   const syncRunToCloud = useCallback(
-    async (finalScore: number, mode: FireMode, zapped: number, combo: number) => {
-      if (finalScore <= 0) return;
+    async (
+      bestScoreCandidate: number,
+      totalToSync: number,
+      runDelta: number,
+      mode: FireMode,
+      zapped: number,
+      combo: number
+    ) => {
+      if (bestScoreCandidate <= 0 && totalToSync <= 0) return;
       try {
         const cleanName = saveLocalPlayerName(playerNameRef.current);
         const syncPromise = submitLeaderboardScore({
           playerName: cleanName,
-          score: finalScore,
+          score: bestScoreCandidate,
+          totalScore: totalToSync,
+          runDelta,
           fireMode: mode,
           zappedCount: zapped,
           bestCombo: combo,
@@ -293,6 +359,23 @@ export default function App() {
       const finalScore = sim.score;
       const prevSavedBest = sim.bestScore;
       const beatSavedBest = finalScore > prevSavedBest;
+      const nextBest = beatSavedBest ? finalScore : prevSavedBest;
+
+      const delta = Math.max(0, finalScore - sim.settledPointsForThisRun);
+      if (delta > 0) {
+        sim.settledPointsForThisRun = finalScore;
+      }
+
+      const nextTotal = Math.max(nextBest, totalScoreRef.current + delta);
+      if (nextTotal !== totalScoreRef.current) {
+        totalScoreRef.current = nextTotal;
+        saveTotalScore(nextTotal);
+        setTotalScore(nextTotal);
+      }
+
+      const nextLv = getLevelFromScore(nextTotal);
+      sim.currentLevel = nextLv;
+      setLevel(nextLv);
 
       if (beatSavedBest) {
         sim.bestScore = finalScore;
@@ -312,8 +395,15 @@ export default function App() {
         setIsNewBest(beatSavedBest);
       }
 
-      if (finalScore > 0) {
-        void syncRunToCloud(finalScore, fireModeRef.current, sim.zappedCount, sim.bestCombo);
+      if (delta > 0 || beatSavedBest) {
+        void syncRunToCloud(
+          nextBest,
+          nextTotal,
+          delta,
+          fireModeRef.current,
+          sim.zappedCount,
+          sim.bestCombo
+        );
       }
     },
     [syncRunToCloud]
@@ -338,8 +428,18 @@ export default function App() {
           const cloudEntry = await fetchUserCloudScore(activeUid);
           if (switchedFromGoogleToGuest) {
             const guestScore = cloudEntry ? cloudEntry.score : 0;
+            const guestTotal = cloudEntry ? Math.max(guestScore, cloudEntry.totalScore) : 0;
             simRef.current.bestScore = guestScore;
             setBestScore(guestScore);
+            totalScoreRef.current = guestTotal;
+            saveTotalScore(guestTotal);
+            setTotalScore(guestTotal);
+            const guestLv = getLevelFromScore(guestTotal);
+            simRef.current.currentLevel = guestLv;
+            setLevel(guestLv);
+            if (gameStateRef.current === 'TITLE_MENU') {
+              simRef.current.baseTotalAtRunStart = guestTotal;
+            }
             saveBestRecord(
               guestScore,
               cloudEntry ? cloudEntry.fireMode : fireModeRef.current,
@@ -351,9 +451,15 @@ export default function App() {
           }
 
           const localBest = simRef.current.bestScore;
-          if (cloudEntry && cloudEntry.score > localBest) {
-            simRef.current.bestScore = cloudEntry.score;
-            setBestScore(cloudEntry.score);
+          const localTotal = totalScoreRef.current;
+          const cloudBest = cloudEntry ? cloudEntry.score : 0;
+          const cloudTotal = cloudEntry ? Math.max(cloudBest, cloudEntry.totalScore) : 0;
+          const resolvedBest = Math.max(localBest, cloudBest);
+          const resolvedTotal = Math.max(resolvedBest, localTotal, cloudTotal);
+
+          if (resolvedBest > localBest && cloudEntry) {
+            simRef.current.bestScore = resolvedBest;
+            setBestScore(resolvedBest);
             saveBestRecord(
               cloudEntry.score,
               cloudEntry.fireMode,
@@ -361,22 +467,46 @@ export default function App() {
               cloudEntry.bestCombo,
               activeUid
             );
-          } else if (localBest > 0 && (!cloudEntry || localBest > cloudEntry.score)) {
+          }
+
+          if (resolvedTotal > localTotal) {
+            totalScoreRef.current = resolvedTotal;
+            saveTotalScore(resolvedTotal);
+            setTotalScore(resolvedTotal);
+            const resolvedLv = getLevelFromScore(resolvedTotal);
+            simRef.current.currentLevel = resolvedLv;
+            setLevel(resolvedLv);
+            if (gameStateRef.current === 'TITLE_MENU') {
+              simRef.current.baseTotalAtRunStart = resolvedTotal;
+            }
+          }
+
+          const cloudNeedsSync =
+            !cloudEntry ||
+            resolvedBest > cloudEntry.score ||
+            resolvedTotal > cloudEntry.totalScore ||
+            cloudEntry.hasTotalField === false;
+
+          if (resolvedTotal > 0 && cloudNeedsSync) {
             const bestMeta = loadBestMeta();
             await submitLeaderboardScore({
               playerName: saveLocalPlayerName(resolvedName),
-              score: localBest,
+              score: resolvedBest,
+              totalScore: resolvedTotal,
+              runDelta: 0,
               fireMode: bestMeta.fireMode,
               zappedCount: bestMeta.zappedCount,
               bestCombo: bestMeta.bestCombo,
             });
-            saveBestRecord(
-              localBest,
-              bestMeta.fireMode,
-              bestMeta.zappedCount,
-              bestMeta.bestCombo,
-              activeUid
-            );
+            if (resolvedBest === localBest) {
+              saveBestRecord(
+                resolvedBest,
+                bestMeta.fireMode,
+                bestMeta.zappedCount,
+                bestMeta.bestCombo,
+                activeUid
+              );
+            }
             setLeaderboardEntries(loadCachedLeaderboard());
           }
         } catch {
@@ -385,8 +515,18 @@ export default function App() {
       } else if (switchedFromGoogleToGuest) {
         const cachedGuest = loadCachedLeaderboard().find((row) => row.uid === activeUid);
         const guestScore = cachedGuest ? cachedGuest.score : 0;
+        const guestTotal = cachedGuest ? Math.max(guestScore, cachedGuest.totalScore) : 0;
         simRef.current.bestScore = guestScore;
         setBestScore(guestScore);
+        totalScoreRef.current = guestTotal;
+        saveTotalScore(guestTotal);
+        setTotalScore(guestTotal);
+        const guestLv = getLevelFromScore(guestTotal);
+        simRef.current.currentLevel = guestLv;
+        setLevel(guestLv);
+        if (gameStateRef.current === 'TITLE_MENU') {
+          simRef.current.baseTotalAtRunStart = guestTotal;
+        }
         saveBestRecord(
           guestScore,
           cachedGuest ? cachedGuest.fireMode : fireModeRef.current,
@@ -394,11 +534,13 @@ export default function App() {
           cachedGuest ? cachedGuest.bestCombo : 0,
           activeUid
         );
-      } else if (simRef.current.bestScore > 0) {
+      } else if (simRef.current.bestScore > 0 || totalScoreRef.current > 0) {
         const bestMeta = loadBestMeta();
         await submitLeaderboardScore({
           playerName: saveLocalPlayerName(resolvedName),
           score: simRef.current.bestScore,
+          totalScore: Math.max(simRef.current.bestScore, totalScoreRef.current),
+          runDelta: 0,
           fireMode: bestMeta.fireMode,
           zappedCount: bestMeta.zappedCount,
           bestCombo: bestMeta.bestCombo,
@@ -559,9 +701,13 @@ export default function App() {
       if (sim.score > 0 && gameStateRef.current !== 'GAME_OVER') {
         settleCurrentRun(false);
       }
-      const initialLives = mode === 'classic' ? 1 : 3;
+      const startLevel = getLevelFromScore(totalScoreRef.current);
+      const initialLives = mode === 'classic' ? 1 : getMaxLivesForLevel(startLevel);
       sim.playTime = 0;
       sim.score = 0;
+      sim.settledPointsForThisRun = 0;
+      sim.baseTotalAtRunStart = totalScoreRef.current;
+      sim.currentLevel = startLevel;
       sim.crossedBestThisRun = false;
       sim.lives = initialLives;
       sim.combo = 0;
@@ -592,6 +738,7 @@ export default function App() {
 
       setScore(0);
       setBestScore(sim.bestScore);
+      setLevel(startLevel);
       setIsNewBest(false);
       setLives(initialLives);
       setMaxLives(initialLives);
@@ -625,7 +772,7 @@ export default function App() {
     const sim = simRef.current;
     if (gameStateRef.current !== 'PLAYING' || sim.shotCooldown > 0) return;
 
-    const origin = getBedOrigin(sim.width, sim.height, fireModeRef.current);
+    const origin = getBedOrigin(sim.width, sim.height, fireModeRef.current, sim.currentLevel);
     const tripleActive = sim.tripleShotTimer > 0;
     const angles = tripleActive ? [sim.aimAngle - 0.22, sim.aimAngle, sim.aimAngle + 0.22] : [sim.aimAngle];
 
@@ -819,6 +966,37 @@ export default function App() {
           setScore(sim.score);
           setBestScore(Math.max(sim.bestScore, sim.score));
 
+          const liveTotal = Math.max(totalScoreRef.current, sim.baseTotalAtRunStart + sim.score);
+          const nextLevel = getLevelFromScore(liveTotal);
+          if (nextLevel > sim.currentLevel) {
+            const prevLevel = sim.currentLevel;
+            sim.currentLevel = nextLevel;
+            setLevel(nextLevel);
+
+            if (gameMode === 'arcade') {
+              const prevMaxLives = getMaxLivesForLevel(prevLevel);
+              const upgradedMaxLives = getMaxLivesForLevel(nextLevel);
+              if (upgradedMaxLives > prevMaxLives) {
+                setMaxLives(upgradedMaxLives);
+                sim.lives = Math.min(upgradedMaxLives, sim.lives + 1);
+                setLives(sim.lives);
+              }
+            }
+
+            soundEngine.playNewBest();
+
+            sim.floatingTexts.push({
+              x: sim.width * 0.5,
+              y: Math.max(120, target.y - 42),
+              vy: -36,
+              text: `LV ${nextLevel}!`,
+              color: '#FBBF24',
+              life: 1.35,
+              maxLife: 1.35,
+              scale: 1.35,
+            });
+          }
+
           if (sim.score > sim.bestScore && !sim.crossedBestThisRun) {
             sim.crossedBestThisRun = true;
             if (sim.bestScore > 0) {
@@ -915,7 +1093,7 @@ export default function App() {
         soundEngine.playThirdLegMiss();
       }
     }
-  }, [prefersReducedMotion]);
+  }, [gameMode, prefersReducedMotion]);
 
   // Resize canvas crisply for HiDPI displays
   useEffect(() => {
@@ -1247,7 +1425,16 @@ export default function App() {
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext('2d');
       if (ctx) {
-        const origin = getBedOrigin(sim.width, sim.height, fireModeRef.current);
+        const liveTotal =
+          state === 'PLAYING' || state === 'PAUSED'
+            ? Math.max(totalScoreRef.current, sim.baseTotalAtRunStart + sim.score)
+            : totalScoreRef.current;
+        const liveLevel = getLevelFromScore(liveTotal);
+        if (liveLevel !== sim.currentLevel) {
+          sim.currentLevel = liveLevel;
+          setLevel(liveLevel);
+        }
+        const origin = getBedOrigin(sim.width, sim.height, fireModeRef.current, liveLevel);
         const shakeMag =
           sim.shakeTime > 0 && !prefersReducedMotion ? sim.shakeIntensity * (sim.shakeTime / 0.2) : 0;
         const shakeX = shakeMag > 0 ? (Math.random() - 0.5) * shakeMag * 2 : 0;
@@ -1272,6 +1459,7 @@ export default function App() {
           zzzBubbles: sim.zzzBubbles,
           avatarStyle: avatarStyleRef.current,
           fireMode: fireModeRef.current,
+          level: liveLevel,
           sleeperMood: sim.sleeperMood,
           customAvatarImg: customAvatarImgRef.current,
           rubPhase: sim.rubPhase,
@@ -1349,7 +1537,7 @@ export default function App() {
     const px = clientX - rect.left;
     const py = clientY - rect.top;
     const sim = simRef.current;
-    const origin = getBedOrigin(sim.width, sim.height, fireModeRef.current);
+    const origin = getBedOrigin(sim.width, sim.height, fireModeRef.current, sim.currentLevel);
 
     if (py < origin.y - 36) {
       const dx = px - origin.x;
@@ -1519,6 +1707,60 @@ export default function App() {
     }
   };
 
+  const handleProfileNameSave = async () => {
+    const cleanName = saveLocalPlayerName(playerName);
+    setPlayerName(cleanName);
+    playerNameRef.current = cleanName;
+    setEditingProfileName(false);
+    if (bestScore <= 0 && totalScore <= 0) return;
+    setProfileBusy(true);
+    try {
+      const meta = loadBestMeta();
+      await submitLeaderboardScore({
+        playerName: cleanName,
+        score: bestScore,
+        totalScore,
+        runDelta: 0,
+        fireMode: meta.fireMode,
+        zappedCount: meta.zappedCount,
+        bestCombo: meta.bestCombo,
+        allowSameScoreRename: true,
+      });
+      setLeaderboardEntries(loadCachedLeaderboard());
+    } catch {
+      setLeaderboardEntries(loadCachedLeaderboard());
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const handleProfileSignIn = async () => {
+    setProfileBusy(true);
+    try {
+      const signedUser = await signInWithGoogle();
+      const nextName = saveLocalPlayerName(playerName || signedUser.displayName || 'Player');
+      setPlayerName(nextName);
+      playerNameRef.current = nextName;
+    } catch {
+      // Ignore user-cancelled sign-in popup
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const handleProfileSignOut = async () => {
+    setProfileBusy(true);
+    try {
+      await signOutUser();
+    } catch {
+      // Ignore sign-out errors
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const levelProgress = getLevelProgress(totalScore);
+
   return (
     <main className="h-dvh w-full overflow-hidden flex items-center justify-center bg-[#020203] md:p-4 select-none">
       {/* Vertical Arcade Playfield Stage */}
@@ -1536,33 +1778,126 @@ export default function App() {
         />
 
         {/* Top HUD */}
-        <header className="pointer-events-none absolute top-0 left-0 right-0 flex items-start justify-between px-4 pt-4 z-10">
-          {/* Top-Left Close / Back to Menu button */}
-          <button
-            type="button"
-            onClick={() => {
-              if (gameState === 'TITLE_MENU') return;
-              resetSimulation(gameMode, false);
-            }}
-            aria-label="Return to main menu"
-            className={`pointer-events-auto w-11 h-11 rounded-full bg-zinc-900/90 hover:bg-zinc-800 border-2 border-white/35 active:scale-95 text-white flex items-center justify-center shadow-lg transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
-              gameState === 'TITLE_MENU' ? 'opacity-0 pointer-events-none' : 'opacity-100'
-            }`}
-          >
-            <X className="w-5 h-5" strokeWidth={2.75} />
-          </button>
+        <header className="pointer-events-none absolute top-0 left-0 right-0 flex items-start justify-between gap-2 px-3.5 pt-3.5 sm:px-4 sm:pt-4 z-20">
+          {/* Top-Left: Compact Gamer Profile on Home Screen OR Back + Hearts in Game */}
+          {gameState === 'TITLE_MENU' ? (
+            <div className="pointer-events-auto flex items-center gap-2.5 min-w-0 max-w-[calc(100%-56px)] rounded-2xl bg-[#121218]/90 backdrop-blur-md border border-white/14 px-2.5 py-2 shadow-lg">
+              {user?.photoURL ? (
+                <img
+                  src={user.photoURL}
+                  alt={playerName}
+                  referrerPolicy="no-referrer"
+                  className="w-9 h-9 rounded-xl object-cover border border-white/25 shrink-0"
+                />
+              ) : customFaceUrl && avatarStyle === 'custom' ? (
+                <img
+                  src={customFaceUrl}
+                  alt={playerName}
+                  className="w-9 h-9 rounded-xl object-cover border border-white/25 shrink-0"
+                />
+              ) : (
+                <div className="w-9 h-9 rounded-xl bg-white/10 border border-white/15 text-zinc-200 flex items-center justify-center shrink-0">
+                  <UserIcon className="w-4 h-4" />
+                </div>
+              )}
 
-          {/* Top-Center Score + BEST + Sleep Hearts + Triple Shot indicator (hidden on Title Showcase) */}
-          {gameState !== 'TITLE_MENU' ? (
-            <div className="flex flex-col items-center text-center pt-1">
-              <span className="font-display text-4xl font-extrabold leading-none tracking-tight text-white tabular-nums">
-                {score}
-              </span>
-              <span className="mt-1 text-[11px] font-bold tracking-wider uppercase text-zinc-400 tabular-nums">
-                BEST {bestScore}
-              </span>
+              <div className="min-w-0 flex-1">
+                {editingProfileName ? (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="text"
+                      maxLength={24}
+                      autoFocus
+                      value={playerName}
+                      onChange={(e) => setPlayerName(e.target.value)}
+                      onBlur={() => {
+                        void handleProfileNameSave();
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.currentTarget.blur();
+                        } else if (e.key === 'Escape') {
+                          setEditingProfileName(false);
+                        }
+                      }}
+                      aria-label="Edit gamer name"
+                      className="w-28 sm:w-36 rounded-lg bg-[#09090D] border border-white/35 px-2 py-0.5 text-xs font-bold text-white focus:outline-none focus:border-amber-300"
+                    />
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        void handleProfileNameSave();
+                      }}
+                      aria-label="Save name"
+                      className="w-6 h-6 rounded-md bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/35 flex items-center justify-center shrink-0"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => setEditingProfileName(true)}
+                      aria-label="Edit gamer name"
+                      className="inline-flex items-center gap-1 min-w-0 text-left group focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white rounded"
+                    >
+                      <span className="text-xs sm:text-sm font-extrabold text-white truncate max-w-[125px] sm:max-w-[160px]">
+                        {playerName}
+                      </span>
+                      <Pencil className="w-3 h-3 text-zinc-400 group-hover:text-white shrink-0 transition-colors" />
+                    </button>
+                  </div>
+                )}
+
+                <div className="mt-0.5 flex items-center gap-1.5 text-[11px] font-semibold text-zinc-400 tabular-nums truncate">
+                  <span>Best {bestScore.toLocaleString()}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>Total {totalScore.toLocaleString()}</span>
+                </div>
+              </div>
+
+              {!user ? (
+                <button
+                  type="button"
+                  disabled={profileBusy}
+                  onClick={() => {
+                    void handleProfileSignIn();
+                  }}
+                  aria-label="Sign in with Google"
+                  className="shrink-0 h-8 px-2.5 rounded-xl bg-white/12 hover:bg-white/20 border border-white/20 text-white text-[11px] font-bold inline-flex items-center gap-1 transition-colors disabled:opacity-50 whitespace-nowrap"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Sign In</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={profileBusy}
+                  onClick={() => {
+                    void handleProfileSignOut();
+                  }}
+                  aria-label="Sign out"
+                  title="Sign Out"
+                  className="shrink-0 w-8 h-8 rounded-xl bg-white/8 hover:bg-white/16 border border-white/15 text-zinc-300 hover:text-white flex items-center justify-center transition-colors disabled:opacity-50"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="pointer-events-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => resetSimulation(gameMode, false)}
+                aria-label="Back to menu"
+                className="w-10 h-10 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border-2 border-white/35 active:scale-95 text-white flex items-center justify-center shadow-lg transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              >
+                <ArrowLeft className="w-5 h-5" strokeWidth={2.5} />
+              </button>
               <div
-                className="mt-2 flex items-center gap-1.5"
+                className="flex items-center gap-1 px-2.5 h-10 rounded-xl bg-zinc-900/80 border border-white/20 shadow-lg"
                 aria-label={`Lives remaining: ${lives} of ${maxLives}`}
               >
                 {Array.from({ length: maxLives }).map((_, idx) => {
@@ -1579,6 +1914,18 @@ export default function App() {
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* Top-Center Score + Level + Best + Triple Shot indicator */}
+          {gameState !== 'TITLE_MENU' ? (
+            <div className="flex flex-col items-center text-center pt-0.5">
+              <span className="font-display text-4xl font-extrabold leading-none tracking-tight text-white tabular-nums">
+                {score}
+              </span>
+              <span className="mt-1 text-[11px] font-bold tracking-wider uppercase text-zinc-300 tabular-nums">
+                LV {level} · Best {bestScore}
+              </span>
               {gameState === 'PLAYING' && tripleShotSeconds > 0 && (
                 <div className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-sky-500/25 border border-sky-400/50 px-2 py-0.5 text-[11px] font-extrabold text-sky-200 tabular-nums">
                   <Zap className="w-3 h-3 fill-sky-300 text-sky-300" />
@@ -1628,15 +1975,51 @@ export default function App() {
         {gameState === 'TITLE_MENU' && (
           <div className="absolute inset-0 flex flex-col items-center justify-end px-3.5 pb-3.5 sm:px-4 sm:pb-4 z-20 pointer-events-none">
             <div className="pointer-events-auto w-full max-w-[396px] rounded-[24px] bg-[#121218]/92 backdrop-blur-md border border-white/14 p-3.5 sm:p-4 shadow-[0_-12px_40px_rgba(0,0,0,0.75)] flex flex-col gap-2.5">
-              {/* Title + Best Score Row */}
-              <div className="flex items-baseline justify-between gap-2 px-0.5">
-                <h1 className="font-display text-xl sm:text-2xl font-extrabold tracking-tight text-white leading-none">
-                  Chudling Pong
-                </h1>
-                <span className="text-xs font-extrabold text-amber-300 tabular-nums whitespace-nowrap shrink-0">
-                  Best {bestScore}
-                </span>
-              </div>
+              {/* Title + Clickable Level Progress & Achievements Section */}
+              <button
+                type="button"
+                onClick={() => setAchievementsOpen(true)}
+                aria-label={`View level ${levelProgress.level} achievements and rewards`}
+                className="w-full text-left flex flex-col gap-1.5 px-1 py-0.5 rounded-xl hover:bg-white/5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <h1 className="font-display text-xl sm:text-2xl font-extrabold tracking-tight text-white leading-none">
+                    Chudling Pong
+                  </h1>
+                  <span className="text-xs font-extrabold text-amber-300 tabular-nums whitespace-nowrap shrink-0">
+                    LV {levelProgress.level} · {levelProgress.achievement.title} ·{' '}
+                    {levelProgress.percent}% ›
+                  </span>
+                </div>
+
+                {/* Level Completion Progress Bar */}
+                <div className="flex flex-col gap-1">
+                  <div
+                    className="h-2 w-full rounded-full bg-white/10 overflow-hidden"
+                    role="progressbar"
+                    aria-valuenow={levelProgress.percent}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label={`Level ${levelProgress.level} progress`}
+                  >
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-amber-400 via-orange-400 to-emerald-400 transition-all duration-300"
+                      style={{
+                        width: `${levelProgress.percent === 0 ? 0 : Math.max(4, levelProgress.percent)}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-400 tabular-nums">
+                    <span>
+                      {levelProgress.totalScore.toLocaleString()} /{' '}
+                      {levelProgress.nextTarget.toLocaleString()}
+                    </span>
+                    <span>
+                      {levelProgress.remaining.toLocaleString()} to LV {levelProgress.level + 1}
+                    </span>
+                  </div>
+                </div>
+              </button>
 
               {/* Character Picker (Transforms the standing character above live) */}
               <input
@@ -1889,6 +2272,7 @@ export default function App() {
         playerName={playerName}
         onPlayerNameChange={setPlayerName}
         bestScore={bestScore}
+        totalScore={totalScore}
         bestMode={
           gameState === 'GAME_OVER' && score >= bestScore
             ? fireMode
@@ -1905,6 +2289,23 @@ export default function App() {
             : loadBestMeta().bestCombo
         }
         onEntriesRefresh={() => setLeaderboardEntries(loadCachedLeaderboard())}
+      />
+
+      <AchievementsModal
+        open={achievementsOpen}
+        onClose={() => setAchievementsOpen(false)}
+        currentLevel={level}
+        totalScore={totalScore}
+        onReplayCelebration={(ach) => {
+          setAchievementsOpen(false);
+          soundEngine.playAchievement();
+          setShowcaseAchievement(ach);
+        }}
+      />
+
+      <AchievementCelebration
+        achievement={showcaseAchievement}
+        onDismiss={() => setShowcaseAchievement(null)}
       />
 
       <FaceCropModal

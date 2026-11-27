@@ -33,12 +33,26 @@ export interface RenderContext {
   fireMode: FireMode;
   sleeperMood: SleeperMood;
   customAvatarImg: HTMLImageElement | null;
+  level: number;
   rubPhase: number;
   fireIntensity: number;
   tripleShotTimer: number;
   shakeX: number;
   shakeY: number;
   biteFlashAlpha: number;
+}
+
+function getThirdLegMetrics(level: number) {
+  const step = Math.max(0, Math.min(6, level - 1));
+  return {
+    step,
+    standDx: 7.5 + step * 3.8,
+    standDy: -(5.5 + step * 2.8),
+    standWidth: 2.8 + step * 1.05,
+    bedDx: 2.0 + step * 1.15,
+    bedDy: -(7.5 + step * 3.6),
+    bedWidth: 2.6 + step * 0.95,
+  };
 }
 
 function getBedLayout(width: number, height: number): { cx: number; cy: number; scale: number } {
@@ -52,7 +66,8 @@ function getBedLayout(width: number, height: number): { cx: number; cy: number; 
 export function getBedOrigin(
   width: number,
   height: number,
-  fireMode: FireMode = 'thirdLeg'
+  fireMode: FireMode = 'thirdLeg',
+  level: number = 1
 ): { x: number; y: number } {
   const { cx, cy, scale } = getBedLayout(width, height);
   if (fireMode === 'hand') {
@@ -61,9 +76,10 @@ export function getBedOrigin(
       y: cy - 26 * scale,
     };
   }
+  const m = getThirdLegMetrics(level);
   return {
-    x: cx + 14 * scale,
-    y: cy - 5 * scale,
+    x: cx + (10 + m.bedDx) * scale,
+    y: cy + (13 + m.bedDy) * scale,
   };
 }
 
@@ -799,13 +815,13 @@ function drawStandingShowcase(rc: RenderContext): void {
   const { ctx, width, height, avatarStyle, fireMode, customAvatarImg, time } = rc;
   const theme = CHARACTER_THEMES[avatarStyle];
 
-  // Clear upper stage right above the bottom-docked menu card
-  const stageTop = 54;
-  const stageBottom = Math.max(255, height - 332);
-  const stageH = Math.max(175, stageBottom - stageTop);
+  // Clear upper stage between top Gamer Profile bar and bottom control deck
+  const stageTop = 64;
+  const stageBottom = Math.max(246, height - 368);
+  const stageH = Math.max(168, stageBottom - stageTop);
   const cx = width * 0.5;
   const groundY = stageTop + stageH * 0.87;
-  const scale = Math.max(0.92, Math.min(1.52, Math.min(width / 380, stageH / 215)));
+  const scale = Math.max(0.88, Math.min(1.48, Math.min(width / 380, stageH / 210)));
 
   // Decorative high-flying night mosquitoes in upper corners
   const decoMosquitoes: Array<{ x: number; y: number; facing: 1 | -1; phase: number }> = [
@@ -868,6 +884,35 @@ function drawStandingShowcase(rc: RenderContext): void {
   ctx.beginPath();
   ctx.ellipse(0, 2, 46, 9.5, 0, 0, Math.PI * 2);
   ctx.stroke();
+
+  if (rc.level >= 2) {
+    const ringPulse = (Math.sin(time * 3.5) + 1) * 0.5;
+    ctx.strokeStyle =
+      rc.level >= 5
+        ? `rgba(251, 191, 36, ${0.42 + ringPulse * 0.35})`
+        : rc.level >= 3
+          ? `rgba(245, 158, 11, ${0.35 + ringPulse * 0.3})`
+          : `rgba(56, 189, 248, ${0.35 + ringPulse * 0.25})`;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.ellipse(0, 2, 54 + ringPulse * 5, 11.5 + ringPulse * 1.4, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  if (rc.level >= 3) {
+    for (let i = 0; i < (rc.level >= 5 ? 6 : 4); i++) {
+      const p = (time * 0.55 + i * 0.22) % 1;
+      const sx = Math.sin(i * 2.1 + time * 1.8) * 38;
+      const sy = -10 - p * 115;
+      ctx.fillStyle =
+        rc.level >= 5
+          ? `rgba(251, 191, 36, ${Math.sin(p * Math.PI) * 0.75})`
+          : `rgba(250, 204, 21, ${Math.sin(p * Math.PI) * 0.55})`;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 1.8 + Math.sin(p * Math.PI) * 1.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 
   const breathe = Math.sin(time * 2.5) * 1.4;
   const sway = Math.sin(time * 1.6) * 1.1;
@@ -1055,16 +1100,20 @@ function drawStandingShowcase(rc: RenderContext): void {
     ctx.strokeRect(-5, shoulderY - 9, 10, 12);
 
     drawAvatarHead(ctx, sway * 0.25, headY, 22, avatarStyle, 'idle', customAvatarImg, time, 0, 0);
+    if (rc.level >= 5) {
+      drawCrown(ctx, sway * 0.25, headY - 22, 0.95);
+    }
   } else {
-    // Classic funny stick-figure hero for Chudling mode (clean lines with no white outline)
+    // Classic funny stick-figure hero for Chudling mode (3rd leg grows longer & thicker with level)
     ctx.save();
     ctx.translate(sway * 0.4, 0);
 
+    const m = getThirdLegMetrics(rc.level);
     const rubWave = Math.sin(rc.rubPhase * 0.55);
-    const tipX = 20;
-    const tipY = hipY - 14;
-    const handX = 11 + rubWave * 2.5;
-    const handY = hipY - 5 + rubWave * 1.6;
+    const tipX = m.standDx;
+    const tipY = hipY - 1 + m.standDy;
+    const handX = Math.max(5.5, tipX * 0.54) + rubWave * 1.9;
+    const handY = hipY - 2 + m.standDy * 0.42 + rubWave * 1.4;
     const chestY = shoulderY + 6;
 
     ctx.strokeStyle = '#18161A';
@@ -1081,9 +1130,6 @@ function drawStandingShowcase(rc: RenderContext): void {
     ctx.moveTo(0, hipY);
     ctx.lineTo(14, -3);
     ctx.lineTo(20, -2);
-    // Signature funny 3rd leg angled upward
-    ctx.moveTo(0, hipY - 1);
-    ctx.lineTo(tipX, tipY);
     // Left arm casual on hip
     ctx.moveTo(0, chestY);
     ctx.lineTo(-19, chestY + 17);
@@ -1092,6 +1138,14 @@ function drawStandingShowcase(rc: RenderContext): void {
     ctx.moveTo(0, chestY);
     ctx.lineTo(18, chestY + 16);
     ctx.lineTo(handX, handY);
+    ctx.stroke();
+
+    // Level-scaled 3rd leg (very short & thin at LV1, grows longer & thicker each level)
+    ctx.strokeStyle = '#18161A';
+    ctx.lineWidth = m.standWidth;
+    ctx.beginPath();
+    ctx.moveTo(0, hipY - 1);
+    ctx.lineTo(tipX, tipY);
     ctx.stroke();
 
     // Stick hands
@@ -1106,18 +1160,30 @@ function drawStandingShowcase(rc: RenderContext): void {
     }
 
     // Glowing pure-white ready droplet at the 3rd leg tip
-    const pulse = Math.sin(time * 8) * 0.7;
+    const pulse = Math.sin(time * 8) * 0.6;
+    const dropScale = 0.78 + m.step * 0.09;
     ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
     ctx.beginPath();
-    ctx.arc(tipX + 2, tipY - 3, 7.5 + pulse, 0, Math.PI * 2);
+    ctx.arc(tipX + 2, tipY - 2.5, (6.5 + pulse) * dropScale, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#FFFFFF';
     ctx.beginPath();
-    ctx.ellipse(tipX + 2, tipY - 4, 3.8, 5.4 + pulse * 0.4, 0.4, 0, Math.PI * 2);
+    ctx.ellipse(
+      tipX + 2,
+      tipY - 3,
+      3.4 * dropScale,
+      (4.8 + pulse * 0.35) * dropScale,
+      0.4,
+      0,
+      Math.PI * 2
+    );
     ctx.fill();
 
     // Upright transforming character face!
     drawAvatarHead(ctx, sway * 0.25, headY, 22, avatarStyle, 'idle', customAvatarImg, time, 0, 0);
+    if (rc.level >= 5) {
+      drawCrown(ctx, sway * 0.25, headY - 22, 0.95);
+    }
   }
 
   // Subtle floating Zzz only for Sleepy character
@@ -1402,12 +1468,13 @@ function drawBedAndSleeper(rc: RenderContext): void {
     ctx.fill();
     ctx.stroke();
   } else {
-    // Chudling mode: classic funny stick-figure rubbing the cut 3rd leg and blasting pure-white sticky liquid
+    // Chudling mode: 3rd leg starts very short & thin at LV1 and grows longer & thicker with each level
+    const m = getThirdLegMetrics(rc.level);
     const rubWave = Math.sin(rc.rubPhase);
-    const rubT = 0.24 + 0.62 * (0.5 + 0.5 * rubWave);
-    const legTipX = 14 + rubWave * 0.5;
-    const legTipY = -5;
-    const handX = hipX + (legTipX - hipX) * rubT + Math.cos(rc.rubPhase) * 0.6;
+    const rubT = 0.28 + 0.56 * (0.5 + 0.5 * rubWave);
+    const legTipX = hipX + m.bedDx + rubWave * 0.4;
+    const legTipY = hipY + m.bedDy;
+    const handX = hipX + (legTipX - hipX) * rubT + Math.cos(rc.rubPhase) * 0.55;
     const handY = hipY + (legTipY - hipY) * rubT;
     const elbowX = -15 + rubT * 2.4;
     const elbowY = 17 - rubT * 2.5;
@@ -1429,9 +1496,6 @@ function drawBedAndSleeper(rc: RenderContext): void {
     ctx.lineTo(48, 22);
     ctx.lineTo(84, 29);
     ctx.lineTo(89, 23);
-    // Small middle third residual/cut leg
-    ctx.moveTo(hipX, hipY);
-    ctx.lineTo(legTipX, legTipY);
     // Back arm resting comfortably on the mattress
     ctx.moveTo(shoulderX, shoulderY);
     ctx.lineTo(-27, -8);
@@ -1442,6 +1506,14 @@ function drawBedAndSleeper(rc: RenderContext): void {
     ctx.lineTo(handX, handY);
     ctx.stroke();
 
+    // Level-scaled 3rd leg
+    ctx.strokeStyle = '#18161A';
+    ctx.lineWidth = m.bedWidth;
+    ctx.beginPath();
+    ctx.moveTo(hipX, hipY);
+    ctx.lineTo(legTipX, legTipY);
+    ctx.stroke();
+
     // Resting back hand & active front hand grip
     ctx.fillStyle = '#18161A';
     ctx.beginPath();
@@ -1449,20 +1521,21 @@ function drawBedAndSleeper(rc: RenderContext): void {
     ctx.arc(handX, handY, 3.4, 0, Math.PI * 2);
     ctx.fill();
 
-    // Glossy pure-white sticky droplet readiness at the cut third leg tip
+    // Glossy pure-white sticky droplet readiness at the 3rd leg tip
     if (rc.isAiming || rc.beams.length > 0 || rc.fireIntensity > 0.2) {
-      const heatBoost = 1 + Math.min(0.55, rc.fireIntensity * 0.3);
-      const flicker = Math.sin(time * 24) * 1.0;
+      const dropScale = 0.78 + m.step * 0.09;
+      const heatBoost = (1 + Math.min(0.55, rc.fireIntensity * 0.3)) * dropScale;
+      const flicker = Math.sin(time * 24) * 0.9;
       ctx.save();
       ctx.translate(legTipX, legTipY);
       ctx.rotate(rc.aimAngle);
       ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
       ctx.beginPath();
-      ctx.arc(0, -3, (7.5 + flicker * 0.4) * heatBoost, 0, Math.PI * 2);
+      ctx.arc(0, -3, (7.0 + flicker * 0.4) * heatBoost, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#FFFFFF';
       ctx.beginPath();
-      ctx.ellipse(0, -5 - flicker * 0.25, 3.8 * heatBoost, (5.5 + flicker * 0.4) * heatBoost, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, -4.5 - flicker * 0.25, 3.6 * heatBoost, (5.0 + flicker * 0.4) * heatBoost, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
@@ -1478,8 +1551,44 @@ function drawBedAndSleeper(rc: RenderContext): void {
   ctx.translate(headX, headY);
   ctx.rotate(headAngle);
   drawAvatarHead(ctx, 0, 0, headR, avatarStyle, sleeperMood, customAvatarImg, time, headAngle, rc.aimAngle);
+  if (rc.level >= 5) {
+    drawCrown(ctx, 0, -headR - 1, 0.84);
+  }
   ctx.restore();
 
+  ctx.restore();
+}
+
+function drawCrown(ctx: CanvasRenderingContext2D, x: number, y: number, scale: number): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#FBBF24';
+  ctx.strokeStyle = '#78350F';
+  ctx.lineWidth = 1.8;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-13, 2);
+  ctx.lineTo(-15, -11);
+  ctx.lineTo(-6, -4);
+  ctx.lineTo(0, -15);
+  ctx.lineTo(6, -4);
+  ctx.lineTo(15, -11);
+  ctx.lineTo(13, 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Gems
+  ctx.fillStyle = '#EF4444';
+  ctx.beginPath();
+  ctx.arc(0, -4.5, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#38BDF8';
+  ctx.beginPath();
+  ctx.arc(-8, -3, 1.6, 0, Math.PI * 2);
+  ctx.arc(8, -3, 1.6, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 
